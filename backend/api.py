@@ -159,18 +159,6 @@ def predict():
             level_color = "red"
             level_emoji = "🔴"
 
-        return jsonify({
-            "input": text,
-            "prediction": final_output,
-            "confidence": confidence,
-            "confidence_level": confidence_level,
-            "level_color": level_color,
-            "level_emoji": level_emoji
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
         # Store words if prediction is spam
         if final_output == "spam":
             words = extract_words(text)
@@ -182,15 +170,14 @@ def predict():
         with open("api.log", "a") as f:
             from datetime import datetime
             f.write(f"{datetime.now()} - Prediction: '{text_preview}' -> {final_output}\n")
-            
-        return jsonify({
-            "input": text, 
-            "prediction": final_output
-        
-        # Return response with domain analysis
+
         return jsonify({
             "input": text,
             "prediction": final_output,
+            "confidence": confidence,
+            "confidence_level": confidence_level,
+            "level_color": level_color,
+            "level_emoji": level_emoji,
             "domain_analysis": domain_analysis
         })
 

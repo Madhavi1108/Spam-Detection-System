@@ -13,4 +13,6 @@ pytest
 shap
 lime
 flask-cors
+requests>=2.31.0
 # Email authenticity verification module uses standard libraries (email, re)
+

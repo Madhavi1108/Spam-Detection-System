@@ -1,51 +1,19 @@
 import { useState } from "react";
-import { AuthProvider, useAuth } from "../context/AuthContext";
-import ProtectedRoute from "../components/ProtectedRoute";
-import Login from "./Login.jsx";
-import Register from "./Register.jsx";
+import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
 import api from "../utils/axiosInstance";
 import "../App.css";
 import FeatureImportance from "../components/FeatureImportance";
-import History from "../components/History";
-import FeedbackWidget from "../components/FeedbackWidget";
 
-const THEMES = {
-  ocean: {
-    name: "🌊 Ocean",
-    light: "bg-gradient-to-br from-blue-500 via-cyan-400 to-teal-500",
-    dark: "bg-gradient-to-br from-blue-900 via-cyan-900 to-teal-900",
-    card: "bg-[#FAF1E6]/35",
-    accent: "bg-indigo-500 hover:bg-indigo-600",
-  },
-  sunset: {
-    name: "🌅 Sunset",
-    light: "bg-gradient-to-br from-orange-400 via-pink-400 to-red-500",
-    dark: "bg-gradient-to-br from-orange-900 via-pink-900 to-red-900",
-    card: "bg-[#FFF5E6]/35",
-    accent: "bg-orange-500 hover:bg-orange-600",
-  },
-  forest: {
-    name: "🌿 Forest",
-    light: "bg-gradient-to-br from-green-400 via-emerald-400 to-teal-500",
-    dark: "bg-gradient-to-br from-green-900 via-emerald-900 to-teal-900",
-    card: "bg-[#E6FAF1]/35",
-    accent: "bg-green-600 hover:bg-green-700",
-  },
-  purple: {
-    name: "💜 Purple",
-    light: "bg-gradient-to-br from-purple-500 via-violet-400 to-pink-500",
-    dark: "bg-gradient-to-br from-purple-900 via-violet-900 to-pink-900",
-    card: "bg-[#F5E6FA]/35",
-    accent: "bg-purple-600 hover:bg-purple-700",
-  },
-  mono: {
-    name: "🖤 Mono",
-    light: "bg-gradient-to-br from-gray-300 via-gray-400 to-gray-500",
-    dark: "bg-gradient-to-br from-gray-900 via-gray-800 to-black",
-    card: "bg-white/35",
-    accent: "bg-gray-700 hover:bg-gray-800",
-  },
-};
+import History from "../components/History";
+import WordCloud from "../components/WordCloud";
+import FeedbackWidget from "../components/FeedbackWidget";
+import Login from "./Login.jsx";
+import Register from "./Register.jsx";
+import EmailHeaderAnalyzer from "../components/EmailHeaderAnalyzer";
+import BulkSpamDetection from "../components/BulkSpamDetection";
+import SpamInsightsDashboard from "../components/SpamInsightsDashboard";
+import EmailScannerDashboard from "../components/EmailScannerDashboard";
 
 function SpamDetector() {
   const [text, setText] = useState("");
@@ -53,13 +21,32 @@ function SpamDetector() {
   const [confidence, setConfidence] = useState(null);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
+
   const [darkMode, setDarkMode] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [theme, setTheme] = useState("ocean");
   const [showThemes, setShowThemes] = useState(false);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("provider") && params.get("code")) {
+      return "scanner";
+    }
+    return "detector";
+  }); // "detector", "bulk", "insights", "authenticity", or "scanner"
+
   const { user, logout } = useAuth();
 
-  const currentTheme = THEMES[theme];
+  const {
+    themeMode,
+    setThemeMode,
+    colorTheme,
+    setColorTheme,
+    isDark,
+    activeTheme,
+    THEME_PALETTES,
+  } = useTheme();
 
   const handlePredict = async () => {
     if (!text) return;
@@ -79,91 +66,355 @@ function SpamDetector() {
   };
 
   const getColor = () => {
-    if (result === "ham" || result === "safe") return "text-green-600";
-    if (result === "spam" || result === "malicious") return "text-red-600";
-    if (result === "smishing") return "text-orange-500";
-    return "text-gray-600";
+    if (result === "ham" || result === "safe")
+      return "text-green-600 dark:text-green-400";
+    if (result === "spam" || result === "malicious")
+      return "text-red-600 dark:text-red-400";
+    if (result === "smishing") return "text-orange-600 dark:text-orange-400";
+    if (result === "Error") {
+      return isDark ? "text-yellow-300" : "text-yellow-700";
+    }
+    return isDark ? "text-slate-300" : "text-slate-600";
   };
 
   const getBg = () => {
-    if (result === "ham" || result === "safe") return "bg-[#81912F]/25 backdrop-blur-md border border-white/30";
-    if (result === "spam" || result === "malicious") return "bg-red-400/20 backdrop-blur-md border border-white/30";
-    if (result === "smishing") return "bg-orange-400/20 backdrop-blur-md border border-white/30";
-    return "bg-white/20 backdrop-blur-md border border-white/30";
+    if (result === "ham" || result === "safe")
+      return "bg-green-500/15 border border-green-500/35";
+    if (result === "spam" || result === "malicious")
+      return "bg-red-500/15 border border-red-500/35";
+    if (result === "smishing")
+      return "bg-orange-500/15 border border-orange-500/35";
+    return "bg-slate-500/15 border border-slate-500/35";
   };
 
-  const confidencePct = confidence !== null ? Math.min(confidence * 50 + 50, 100).toFixed(1) : "0.0";
+  const confidencePct =
+    confidence !== null
+      ? Math.min(confidence * 50 + 50, 100).toFixed(1)
+      : "0.0";
 
   return (
-    <div className={`min-h-screen flex items-center justify-center px-4 transition-all duration-500 ${darkMode ? currentTheme.dark : currentTheme.light}`}>
-      
-      {/* Top controls (Theme/User/History) kept as per your logic */}
-      <div className="absolute top-4 right-4 flex gap-2 flex-wrap justify-end">
-        <button onClick={() => setShowThemes(!showThemes)} className={`px-4 py-2 rounded-xl font-semibold ${darkMode ? "bg-gray-700 text-white" : "bg-white/30"}`}>🎨 Theme</button>
+    <div
+      className={`min-h-screen flex items-center justify-center px-4 transition-all duration-500 ${
+        isDark ? activeTheme.dark : activeTheme.light
+      }`}
+    >
+      {/* Top Controls */}
+      <div className="absolute top-4 right-4 flex gap-3 flex-wrap justify-end">
+        <button
+          onClick={() => setShowSettings(!showSettings)}
+          className={`px-4 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center gap-2 shadow-md ${
+            isDark
+              ? "bg-slate-800 text-white hover:bg-slate-700"
+              : "bg-white/35 text-slate-850 hover:bg-white/50"
+          }`}
+        >
+          ⚙️ Customize Theme
+        </button>
+
+        <button
+          onClick={logout}
+          className="px-4 py-2.5 rounded-xl font-bold bg-red-650 hover:bg-red-600 text-white transition-all active:scale-95 shadow-md"
+        >
+          Logout
+        </button>
       </div>
 
       <div className="absolute top-4 left-4">
-        <button onClick={() => setShowHistory(!showHistory)} className="px-4 py-2 rounded-xl bg-indigo-600 text-white">📜 History</button>
+        <span
+          className={`text-sm font-semibold px-4 py-2 rounded-full shadow-sm backdrop-blur-md ${
+            isDark
+              ? "bg-slate-800/80 text-slate-200 border border-slate-700/50"
+              : "bg-white/30 text-slate-850 border border-white/20"
+          }`}
+        >
+          👤 {user?.username}
+        </span>
       </div>
 
-      {showHistory && (
-        <div className={`fixed top-0 left-0 h-full w-80 overflow-y-auto p-4 z-50 ${darkMode ? "bg-gray-900" : "bg-white"}`}>
-          <button onClick={() => setShowHistory(false)}>✕</button>
-          <History darkMode={darkMode} />
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div
+            className={`w-full max-w-md rounded-3xl p-6 shadow-2xl border transition-all duration-300 ${
+              isDark
+                ? "bg-slate-900 text-slate-100 border-slate-700"
+                : "bg-white text-slate-900 border-slate-200"
+            }`}
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold">🎨 Theme Settings</h3>
+              <button
+                onClick={() => setShowSettings(false)}
+                className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                  isDark
+                    ? "bg-slate-800 hover:bg-slate-700"
+                    : "bg-slate-100 hover:bg-slate-200"
+                }`}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mode selection */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold mb-3">
+                Theme Mode
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { mode: "light", label: "☀️ Light" },
+                  { mode: "dark", label: "🌙 Dark" },
+                  { mode: "system", label: "⚙️ System" },
+                ].map((item) => (
+                  <button
+                    key={item.mode}
+                    onClick={() => setThemeMode(item.mode)}
+                    className={`py-2 px-3 rounded-xl text-sm font-medium transition-all ${
+                      themeMode === item.mode
+                        ? activeTheme.accent
+                        : isDark
+                          ? "bg-slate-800 hover:bg-slate-750 text-slate-300"
+                          : "bg-slate-100 hover:bg-slate-150 text-slate-700"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Color selection */}
+            <div>
+              <label className="block text-sm font-semibold mb-3">
+                Color Accent
+              </label>
+              <div className="flex flex-col gap-2">
+                {Object.entries(THEME_PALETTES).map(([key, value]) => (
+                  <button
+                    key={key}
+                    onClick={() => setColorTheme(key)}
+                    className={`w-full flex items-center justify-between p-3.5 rounded-xl text-left text-sm font-semibold border transition-all ${
+                      colorTheme === key
+                        ? isDark
+                          ? "border-blue-500 bg-slate-800"
+                          : "border-indigo-500 bg-slate-100"
+                        : isDark
+                          ? "border-slate-800 bg-slate-850 hover:bg-slate-800"
+                          : "border-slate-100 bg-slate-50 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span>{value.name}</span>
+                    <span className={`w-8 h-5 rounded-full ${value.light}`} />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowSettings(false)}
+              className={`w-full mt-6 py-3 rounded-xl font-bold text-white shadow-md transition-all active:scale-95 ${activeTheme.accent}`}
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Main Card */}
-      <div className={`w-full max-w-lg backdrop-blur-xl border rounded-3xl p-6 text-center ${darkMode ? "bg-gray-900/40 border-gray-600" : "bg-white/20 border-white/20"}`}>
-        <div className={`w-full max-w-md rounded-2xl p-6 mx-auto ${darkMode ? "bg-gray-800/70" : `${currentTheme.card}`}`}>
-          <h1 className="text-3xl font-bold mb-2">📨 Spam Detector</h1>
-          
-          <select value={type} onChange={(e) => setType(e.target.value)} className="w-full p-3 rounded-xl border mb-4">
-            <option value="message">Message</option>
-            <option value="email">Email</option>
-            <option value="url">URL</option>
-          </select>
+      {/* Main card */}
+      <div
+        className={`w-full max-w-lg backdrop-blur-xl border rounded-3xl shadow-2xl p-6 sm:p-8 text-center transition-all duration-500 ${
+          isDark
+            ? "bg-slate-950/40 border-slate-750"
+            : "bg-white/20 border-white/20"
+        }`}
+      >
+        <div
+          className={`w-full max-w-md rounded-2xl shadow-3xl p-6 sm:p-8 text-center mx-auto transition-all duration-500 ${
+            isDark
+              ? activeTheme.cardDark
+              : `${activeTheme.card} backdrop-blur-md`
+          }`}
+        >
+          <h1 className="text-3xl font-extrabold mb-2 tracking-tight">
+            📨 Spam Detector
+          </h1>
 
-          <textarea className="w-full border p-3 rounded-xl resize-none" rows="4" value={text} onChange={(e) => setText(e.target.value)} />
+          <p className="font-semibold text-sm mb-6 opacity-75">
+            Analyze messages, emails & URLs instantly
+          </p>
 
-          <button onClick={handlePredict} className={`mt-4 w-full py-3 rounded-xl ${currentTheme.accent}`}>
-            {loading ? "Analyzing..." : "Analyze"}
-          </button>
+          {/* Navigation Tabs */}
+          <div className="flex justify-center gap-2 mb-6 border-b border-slate-500/20 pb-3 text-sm font-bold">
+            <button
+              onClick={() => setActiveTab("detector")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "detector"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Spam Detector
+            </button>
+            <button
+              onClick={() => setActiveTab("bulk")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "bulk"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Bulk Detector
+            </button>
+            <button
+              onClick={() => setActiveTab("insights")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "insights"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Insights
+            </button>
+            <button
+              onClick={() => setActiveTab("authenticity")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "authenticity"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Sender Verifier
+            </button>
+            <button
+              onClick={() => setActiveTab("scanner")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "scanner"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Email Scanner
+            </button>
+          </div>
 
-          {/* Fixed Result Display Section */}
-          {result && (
-            <div className="mt-4">
-              <div className={`p-4 rounded-xl font-semibold ${getBg()} ${getColor()}`}>
-                {result === "ham" && "✅ Safe Message"}
-                {result === "spam" && "🚫 Spam Detected"}
-                {result === "smishing" && "⚠️ Fraud Alert"}
-                {result === "safe" && "✅ Safe URL"}
-                {result === "malicious" && "🚨 Malicious URL"}
-                {result === "Error" && "⚠️ Something went wrong"}
+          {activeTab === "detector" ? (
+            <>
+              <div className="mb-4">
+                <select
+                  value={type}
+                  onChange={(e) => setType(e.target.value)}
+                  className={`w-full p-3.5 rounded-xl border font-semibold focus:outline-none focus:ring-2 transition-all ${
+                    isDark ? activeTheme.inputDark : activeTheme.input
+                  }`}
+                >
+                  <option value="message">Message</option>
+                  <option value="email">Email</option>
+                  <option value="url">URL</option>
+                </select>
               </div>
 
-              {result !== "Error" && confidence !== null && (
-                <div className="mt-3 text-left">
-                  <p className="text-xs font-medium mb-1">Model Confidence: {confidencePct}%</p>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="h-2 rounded-full bg-indigo-500" style={{ width: `${confidencePct}%` }} />
+              <textarea
+                className={`w-full border p-3.5 rounded-xl focus:outline-none focus:ring-2 resize-none text-sm sm:text-base transition-all ${
+                  isDark ? activeTheme.inputDark : activeTheme.input
+                }`}
+                rows="4"
+                placeholder={
+                  type === "url"
+                    ? "Enter URL to check..."
+                    : type === "message"
+                      ? "Type your message..."
+                      : "Paste your email content..."
+                }
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+
+              <button
+                onClick={handlePredict}
+                className={`mt-5 w-full py-3.5 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all ${activeTheme.accent}`}
+              >
+                {loading
+                  ? "Analyzing..."
+                  : `Analyze ${type === "url" ? "URL" : type}`}
+              </button>
+
+              {result && (
+                <div className="mt-4 border border-slate-350/20 rounded-2xl p-2 bg-slate-500/5">
+                  <div
+                    className={`p-4 rounded-xl font-bold transition-all duration-300 ${getBg()} ${getColor()}`}
+                  >
+                    {result === "ham" && "✅ Safe Message"}
+                    {result === "spam" && "🚫 Spam Detected"}
+                    {result === "smishing" && "⚠️ Fraud Alert"}
+                    {result === "safe" && "✅ Safe URL"}
+                    {result === "malicious" && "🚨 Malicious URL"}
+                    {result === "Error" && "⚠️ Something went wrong"}
+                  </div>
+                </div>
+              )}
+              <WordCloud darkMode={darkMode} />
+
+              {result && confidence !== null && result !== "Error" && (
+                <div className="mt-4 text-left">
+                  <p className="text-xs font-semibold mb-1 opacity-70">
+                    Model Confidence: {confidencePct}%
+                  </p>
+                  <div
+                    className={`w-full rounded-full h-2 ${isDark ? "bg-slate-800" : "bg-slate-200"}`}
+                  >
+                    <div
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        result === "ham" || result === "safe"
+                          ? "bg-green-500"
+                          : result === "spam" || result === "malicious"
+                            ? "bg-red-500"
+                            : "bg-orange-500"
+                      }`}
+                      style={{ width: `${confidencePct}%` }}
+                    />
                   </div>
                 </div>
               )}
 
-              {result !== "Error" && type !== "url" && (
-                <FeedbackWidget text={text} predictedLabel={result} darkMode={darkMode} />
+              {result && result !== "Error" && type !== "url" && (
+                <FeedbackWidget
+                  key={`${text}|${result}|${confidence}`}
+                  text={text}
+                  predictedLabel={result}
+                  darkMode={isDark}
+                />
               )}
-            </div>
-          )}
 
-          <button onClick={() => { setText(""); setResult(""); }} className="mt-4 w-full py-3 rounded-xl bg-gray-500 text-white">Reset</button>
-          <FeatureImportance darkMode={darkMode} />
+              <button
+                onClick={() => {
+                  setText("");
+                  setResult("");
+                  setConfidence(null);
+                  setType("message");
+                }}
+                className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
+                  isDark
+                    ? activeTheme.btnSecondaryDark
+                    : activeTheme.btnSecondary
+                }`}
+              >
+                Reset
+              </button>
+
+              <FeatureImportance darkMode={isDark} />
+            </>
+          ) : activeTab === "bulk" ? (
+            <BulkSpamDetection />
+          ) : activeTab === "insights" ? (
+            <SpamInsightsDashboard />
+          ) : activeTab === "scanner" ? (
+            <EmailScannerDashboard />
+          ) : (
+            <EmailHeaderAnalyzer />
+          )}
         </div>
       </div>
     </div>
   );
 }
 export default SpamDetector;
-
-

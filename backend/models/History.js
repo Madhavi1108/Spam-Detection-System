@@ -17,13 +17,12 @@ const historySchema = new mongoose.Schema(
     prediction: {
       type: String,
       required: true,
-      enum: ["ham", "spam", "smishing"],
     },
 
     type: {
       type: String,
       required: true,
-      enum: ["message", "email"],
+      enum: ["sms", "email", "url", "message"],
     },
   },
   { timestamps: true }

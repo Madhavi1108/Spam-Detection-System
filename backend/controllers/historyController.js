@@ -1,4 +1,5 @@
 const History = require("../models/History");
+const mongoose = require("mongoose");
 
 // Get logged-in user's history
 const getHistory = async (req, res) => {
@@ -15,6 +16,13 @@ const getHistory = async (req, res) => {
 
 // Delete a single history item
 const deleteHistoryItem = async (req, res) => {
+
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({
+      error: "Invalid history id",
+    });
+  }
+  
   try {
     const historyItem = await History.findOneAndDelete({
       _id: req.params.id,

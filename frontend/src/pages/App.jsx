@@ -255,7 +255,7 @@ function SpamDetector() {
             Analyze messages, emails & URLs instantly
           </p>
           {/* Navigation Tabs */}
-          <div className="flex justify-center gap-2 mb-6 border-b border-slate-500/20 pb-3 text-sm font-bold">
+          <div className="flex flex-wrap justify-center gap-2 mb-6 border-b border-slate-500/20 pb-3 text-sm font-bold">
             <button
               onClick={() => setActiveTab("detector")}
               className={`pb-1 px-4 transition-all border-b-2 ${
@@ -310,7 +310,10 @@ function SpamDetector() {
               onClick={() => navigate("/dashboard")}
               className="pb-1 px-4 transition-all border-b-2 border-transparent opacity-50 hover:opacity-75"
             >
-              📊 Dashboard
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <span>📊</span>
+                <span>Dashboard</span>
+              </span>
             </button>
           </div>
           {activeTab === "detector" ? (

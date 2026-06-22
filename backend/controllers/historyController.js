@@ -38,7 +38,7 @@ const getHistory = async (req, res) => {
         message: "Server error",
       },
     });
-  } 
+  }
 
 // Delete a single history item
 const deleteHistoryItem = async (req, res) => {

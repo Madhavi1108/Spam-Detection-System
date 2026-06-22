@@ -1,6 +1,8 @@
 const { formatError, errorMiddleware, errorCodes } = require('./utils/errorHelper');
 require("dotenv").config();
 const dns = require("dns");
+const validateEnv = require('./utils/validateEnv');
+validateEnv(); // Validate environment variables
 dns.setServers(["8.8.8.8", "1.1.1.1"]); // ensure SRV records resolve on all networks
 const express = require("express");
 const cors = require("cors");

@@ -5,6 +5,7 @@ const validateEnv = require('./utils/validateEnv');
 validateEnv(); // Validate environment variables
 dns.setServers(["8.8.8.8", "1.1.1.1"]); // ensure SRV records resolve on all networks
 const express = require("express");
+const { getHealthStatus } = require('./utils/healthCheck');
 const cors = require("cors");
 const axios = require("axios");
 const mongoose = require("mongoose");
@@ -48,6 +49,21 @@ const { protect } = require("./middleware/authMiddleware");
 
 app.get("/", (req, res) => {
   res.send("Node backend running ");
+});
+
+// Health check endpoint
+app.get("/health", async (req, res) => {
+  try {
+    const healthStatus = await getHealthStatus();
+    const statusCode = healthStatus.status === "healthy" ? 200 : 503;
+    res.status(statusCode).json(healthStatus);
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to retrieve health status',
+      error: error.message
+    });
+  }
 });
 
 // Protected: only authenticated users can predict

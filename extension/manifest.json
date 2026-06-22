@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Spam Detection Inbox Scanner",
+  "version": "0.1.0",
+  "description": "Scans visible Gmail/Outlook messages for spam, smishing and offensive content using the Spam Detection System API and flags them inline.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.office.com/*",
+    "http://localhost:3000/*",
+    "http://localhost:5000/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Spam Detection Inbox Scanner"
+  },
+  "options_page": "src/options/options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": [
+        "src/lib/textUtils.js",
+        "src/lib/cache.js",
+        "src/lib/classifier.js",
+        "src/content/common.js",
+        "src/content/gmail.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://outlook.live.com/*", "https://outlook.office.com/*"],
+      "js": [
+        "src/lib/textUtils.js",
+        "src/lib/cache.js",
+        "src/lib/classifier.js",
+        "src/content/common.js",
+        "src/content/outlook.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "spam-detection-scanner@rudra-clrscr",
+      "strict_min_version": "109.0"
+    }
+  }
+}

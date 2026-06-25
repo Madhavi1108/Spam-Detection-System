@@ -61,7 +61,7 @@ function SpamDetector() {
   } = useTheme();
 
   const handlePredict = async () => {
-    if (!text) return;
+    if (!text || text.trim().length === 0) return;
     try {
       setLoading(true);
       const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
@@ -416,8 +416,11 @@ function SpamDetector() {
             </div>
           </div>
           <button
-            onClick={handlePredict}
-            disabled={loading || text.length > 5000}
+            onClick={() => {
+              if (!text.trim()) return;
+              handlePredict();
+            }}
+            disabled={loading || text.trim().length === 0 || text.length > 5000}
             className={`mt-2 w-full py-3.5 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${activeTheme.accent}`}
           >
             {loading && (

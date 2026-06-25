@@ -27,6 +27,7 @@ function SpamDetector() {
   const [confidence, setConfidence] = useState(null);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
+  const [copied, setCopied] = useState(false);
 
   const [darkMode, setDarkMode] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -443,7 +444,24 @@ function SpamDetector() {
             >
               {/* Heading */}
               <div className="flex justify-between items-center mb-5">
-                <h2 className="text-lg font-bold">📊 Analysis Result</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold">📊 Analysis Result</h2>
+                  <button
+                    onClick={() => {
+                      const scoreStr = confidence !== null ? ` | Confidence: ${confidencePct}%` : "";
+                      const copyText = `Prediction: ${result === 'ham' || result === 'safe' ? 'Safe' : result === 'spam' || result === 'malicious' ? 'Spam/Malicious' : result === 'smishing' ? 'Fraud' : result}${scoreStr}`;
+                      navigator.clipboard.writeText(copyText);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className={`ml-1 w-7 h-7 flex items-center justify-center rounded-full transition-all text-[11px] ${
+                      isDark ? "hover:bg-slate-700 bg-slate-800 text-slate-300" : "hover:bg-slate-200 bg-slate-100 text-slate-600"
+                    }`}
+                    title="Copy Result to Clipboard"
+                  >
+                    {copied ? "✅" : "📋"}
+                  </button>
+                </div>
 
                 {/* Badge */}
                 <span

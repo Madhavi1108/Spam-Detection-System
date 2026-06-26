@@ -4,6 +4,7 @@ import joblib
 import numpy as np
 import os
 import re
+from collections import Counter
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from domain_checker import analyze_text
@@ -11,6 +12,28 @@ from email_header_analyzer import analyze_headers
 from explanation_engine import ExplanationEngine
 from pathlib import Path
 from flask_cors import CORS
+import sys
+import requests
+
+# Try to import NLTK for stopwords (optional)
+try:
+    import nltk
+    from nltk.corpus import stopwords
+    from nltk.tokenize import word_tokenize
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "email_connectors"))
+from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
+from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
+from email_scanner import scan_emails_with_model
+import imap_connector
+import imap_store
+from crypto_utils import encrypt_secret, decrypt_secret, CredentialEncryptionError
+from apscheduler.schedulers.background import BackgroundScheduler
 load_dotenv()
 
 app = Flask(__name__)
@@ -18,26 +41,46 @@ app = Flask(__name__)
 xai_engine = ExplanationEngine()
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-MODEL_PATH = os.getenv("MODEL_PATH", "linear_svm_model.pkl")
-VECTORIZER_PATH = os.getenv("VECTORIZER_PATH", "tfidf_vectorizer.pkl")
-LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH", "label_encoder.pkl")
+def resolve_path(env_var, default_filename):
+    val = os.getenv(env_var)
+    if val:
+        p = Path(val)
+        if p.is_absolute():
+            return val
+        if p.exists() and p.stat().st_size > 0:
+            return val
+        p_base = BASE_DIR / p
+        if p_base.exists() and p_base.stat().st_size > 0:
+            return str(p_base)
+        p_name = BASE_DIR / p.name
+        if p_name.exists() and p_name.stat().st_size > 0:
+            return str(p_name)
+        return val
+    return str(BASE_DIR / default_filename)
 
-if not MODEL_PATH or not VECTORIZER_PATH or not LABEL_ENCODER_PATH:
-    raise ValueError("Required environment variables are missing")
+MODEL_PATH = resolve_path("MODEL_PATH", "linear_svm_model.pkl")
+VECTORIZER_PATH = resolve_path("VECTORIZER_PATH", "tfidf_vectorizer.pkl")
+LABEL_ENCODER_PATH = resolve_path("LABEL_ENCODER_PATH", "label_encoder.pkl")
+URL_MODEL_PATH = resolve_path("URL_MODEL_PATH", "url_detector.pkl")
+URL_VECTORIZER_PATH = resolve_path("URL_VECTORIZER_PATH", "url_vectorizer.pkl")
 
 model = joblib.load(MODEL_PATH)
 vectorizer = joblib.load(VECTORIZER_PATH)
 label_encoder = joblib.load(LABEL_ENCODER_PATH)
-BASE_DIR = Path(__file__).resolve().parent
-URL_MODEL_PATH = os.getenv(
-    "URL_MODEL_PATH",
-    str(BASE_DIR / "url_detector.pkl")
-)
 
-URL_VECTORIZER_PATH = os.getenv(
-    "URL_VECTORIZER_PATH",
-    str(BASE_DIR / "url_vectorizer.pkl")
-)
+from xai_service import XAIService
+xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
+
+# In-memory storage for spam words (for demo purposes)
+# In production, use a database
+spam_words_storage = {}
+app.model = model
+app.vectorizer = vectorizer
+app.label_encoder = label_encoder
+
+from bulk_predict import bulk_predict_bp
+app.register_blueprint(bulk_predict_bp)
+
 url_model = joblib.load(URL_MODEL_PATH)
 url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
 # url_detector.pkl predicts numeric classes with no bundled label encoder
@@ -50,10 +93,12 @@ SUSPICIOUS_TLDS = {
 }
 IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
-
 def heuristic_url_is_malicious(url):
     candidate = url if "://" in url else f"http://{url}"
     host = urlparse(candidate).hostname or ""
+
+    if not host:
+        return False
 
     if "@" in url:
         return True
@@ -67,13 +112,21 @@ def heuristic_url_is_malicious(url):
     return tld in SUSPICIOUS_TLDS
 
 
-FEEDBACK_FILE = "feedback_store.csv"
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+FEEDBACK_FILE = OUTPUT_DIR / "feedback_store.csv"
+LOG_FILE = OUTPUT_DIR / "api.log"
 FEEDBACK_LABELS = set(label_encoder.classes_)
 
 
 @app.route("/")
 def home():
     return "ML API Running 🚀"
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
 
 @app.route("/predict", methods=["POST"])
@@ -84,7 +137,7 @@ def predict():
         
         input_type = data.get("type", "message")
         if not text:
-            with open("api.log", "a") as f:
+            with open(LOG_FILE, "a") as f:
                 f.write(f"WARNING: No text provided at {__import__('datetime').datetime.now()}\n")
             return jsonify({"error": "No text provided"}), 400
 
@@ -106,16 +159,61 @@ def predict():
             text_vector = url_vectorizer.transform([text])
             prediction = url_model.predict(text_vector)
             final_output = URL_LABELS.get(int(prediction[0]), "unknown")
+            confidence = 0.90
             if final_output == "safe" and heuristic_url_is_malicious(text):
                 final_output = "malicious"
         else:
             text_vector = vectorizer.transform([text])
             prediction = model.predict(text_vector)
             final_output = label_encoder.inverse_transform(prediction)[0]
+            confidence = 0.90
+
+         # ─── GET CONFIDENCE SCORE ──────────────────────────────────────
+        # Get probability/confidence from model
+        confidence = 95.0 #default fallback percentage
+        try:
+            active_model = url_model if input_type == "url" else model
+            # If model has predict_proba
+            if hasattr(active_model, 'predict_proba'):
+                proba = active_model.predict_proba(text_vector)
+                confidence = round(max(proba[0]) * 100, 2)
+            elif hasattr(active_model, 'decision_function'):
+                import numpy as np
+                decision = active_model.decision_function(text_vector)
+                if isinstance(decision, np.ndarray):
+                    score = float(np.max(np.abs(decision)))
+                else:
+                    score = float(abs(decision))
+                # Sigmoid mapping to pseudo-probability percentage
+                prob = 1.0 / (1.0 + np.exp(-score))
+                confidence = round(prob * 100, 2)
+        except Exception:
+            # Fallback: safely set confidence to 0 when prediction probability fails
+            confidence = 0.0
+        
+        # ─── DETERMINE CONFIDENCE LEVEL ───────────────────────────────
+        if confidence >= 80:
+            confidence_level = "high"
+            level_color = "green"
+            level_emoji = "🟢"
+        elif confidence >= 60:
+            confidence_level = "medium"
+            level_color = "yellow"
+            level_emoji = "🟡"
+        else:
+            confidence_level = "low"
+            level_color = "red"
+            level_emoji = "🔴"
+
+        # Store words if prediction is spam
+        if final_output == "spam":
+            words = extract_words(text)
+            for word in words:
+                spam_words_storage[word] = spam_words_storage.get(word, 0) + 1
 
         # Log prediction
         text_preview = text[:50] + "..." if len(text) > 50 else text
-        with open("api.log", "a") as f:
+        with open(LOG_FILE, "a") as f:
             from datetime import datetime
             f.write(f"{datetime.now()} - Prediction: '{text_preview}' -> {final_output}\n")
         
@@ -136,9 +234,96 @@ def predict():
         return jsonify(response_data)
 
     except Exception as e:
-        with open("api.log", "a") as f:
+        with open(LOG_FILE, "a") as f:
             from datetime import datetime
             f.write(f"{datetime.now()} - ERROR: {str(e)}\n")
+        return jsonify({"error": str(e)}), 500
+
+
+def extract_words(text):
+    """Extract words from text, remove stopwords and punctuation."""
+    # Convert to lowercase and remove punctuation
+    text = re.sub(r'[^\w\s]', '', text.lower())
+    words = text.split()
+    
+    # Remove stopwords if NLTK available
+    if NLTK_AVAILABLE:
+        stop_words = set(stopwords.words('english'))
+        words = [w for w in words if w not in stop_words and len(w) > 2]
+    else:
+        # Basic stopword list (fallback)
+        basic_stopwords = {'the', 'a', 'an', 'of', 'for', 'on', 'at', 'to', 'in', 'is', 'it', 'and', 'or', 'but', 'with', 'from', 'by', 'as', 'was', 'are', 'were', 'been'}
+        words = [w for w in words if w not in basic_stopwords and len(w) > 2]
+    
+    return words
+
+
+def get_wordcloud_data():
+    """Return stored spam word frequencies."""
+    if spam_words_storage:
+        # Sort by frequency and return top 50
+        sorted_words = sorted(spam_words_storage.items(), key=lambda x: x[1], reverse=True)
+        return [{"word": w, "count": c} for w, c in sorted_words[:50]]
+    return None
+
+
+# Common spam words (fallback sample data)
+SPAM_WORDS = {
+    'free': 145, 'win': 98, 'click': 76, 'urgent': 54, 'prize': 42,
+    'limited': 38, 'offer': 35, 'money': 32, 'cash': 28, 'bonus': 25,
+    'guaranteed': 22, 'credit': 20, 'loan': 18, 'insurance': 15, 'debt': 14,
+    'winner': 14, 'congratulations': 13, 'exclusive': 12, 'opportunity': 10,
+    'investment': 9, 'profit': 9, 'earn': 8, 'income': 8, 'million': 7,
+    'billion': 6, 'rich': 6, 'secret': 6, 'miracle': 5, 'amazing': 5
+}
+
+
+@app.route('/api/wordcloud', methods=['GET'])
+def get_wordcloud():
+    """
+    Get word frequency data for spam messages.
+    Returns top words with frequencies for word cloud visualization.
+    """
+    try:
+        # Try to get stored data
+        words_data = get_wordcloud_data()
+        
+        if words_data:
+            return jsonify({
+                "success": True,
+                "data": words_data,
+                "source": "database"
+            })
+        
+        # Fallback to sample data
+        sample_data = [{"word": w, "count": c} for w, c in SPAM_WORDS.items()]
+        return jsonify({
+            "success": True,
+            "data": sample_data,
+            "source": "sample"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/importance", methods=["GET"])
+def get_feature_importance():
+    """
+    Get global feature importance (top words driving spam/smishing
+    classifications), computed via SHAP over the trained model.
+    """
+    try:
+        top_features = [
+            {"feature": word, "importance": score}
+            for word, score in xai_service.get_global_importance()
+        ]
+        return jsonify({"top_features": top_features})
+    except Exception as e:
+        app.logger.error(f"Failed to compute feature importance: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -167,18 +352,386 @@ def feedback():
 @app.route("/analyze-email-header", methods=["POST"])
 def analyze_email_header():
     try:
-        data = request.get_json(silent=True) or {}
-        headers = data.get("headers", "")
-        if not headers:
+        headers = None
+        if "file" in request.files:
+            file = request.files["file"]
+            if file and file.filename != "":
+                try:
+                    raw_bytes = file.read()
+                    try:
+                        headers = raw_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        headers = raw_bytes.decode("latin-1", errors="replace")
+                except Exception as e:
+                    return jsonify({"error": f"Failed to read EML file: {str(e)}"}), 400
+            else:
+                return jsonify({"error": "No email headers provided"}), 400
+        else:
+            data = request.get_json(silent=True) or {}
+            headers = data.get("headers", "")
+
+        if not headers or not headers.strip():
             return jsonify({"error": "No email headers provided"}), 400
             
         analysis = analyze_headers(headers)
         return jsonify({
+            "success": True,
+            "trust_level": analysis.get("trust_level", "Suspicious"),
+            "risk_score": analysis.get("risk_score", 0),
+            "findings": analysis.get("findings", []),
             "status": analysis.get("risk_level", "Suspicious"),
             "analysis": analysis
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/spam-insights", methods=["GET"])
+def get_insights():
+    try:
+        limit = request.args.get("limit", default=10, type=int)
+        category = request.args.get("category", default=None, type=str)
+        
+        from spam_insights import get_spam_insights
+        insights = get_spam_insights(limit=limit, category=category)
+        return jsonify(insights)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+TOKEN_STORE = {}
+
+@app.route("/gmail/auth-url", methods=["GET"])
+def gmail_auth_url():
+    redirect_uri = request.args.get("redirect_uri") or "http://localhost:3000/gmail/callback"
+    url = get_gmail_auth_url(redirect_uri)
+    return jsonify({"auth_url": url})
+
+@app.route("/gmail/callback", methods=["GET"])
+def gmail_callback():
+    code = request.args.get("code")
+    redirect_uri = request.args.get("redirect_uri") or "http://localhost:3000/gmail/callback"
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    
+    if not code:
+        return jsonify({"error": "Authorization code is missing"}), 400
+        
+    try:
+        tokens = get_gmail_tokens(code, redirect_uri)
+        if username not in TOKEN_STORE:
+            TOKEN_STORE[username] = {}
+        TOKEN_STORE[username]["gmail"] = tokens
+        return jsonify({"message": "Gmail connected successfully"})
+    except Exception as e:
+        return jsonify({"error": f"Failed to exchange Google code: {str(e)}"}), 500
+
+@app.route("/gmail/emails", methods=["GET"])
+def gmail_emails():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    user_tokens = TOKEN_STORE.get(username, {}).get("gmail")
+    
+    if not user_tokens:
+        return jsonify({"error": "Gmail account not connected"}), 401
+        
+    try:
+        try:
+            emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
+        except requests.exceptions.HTTPError as err:
+            if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                user_tokens["access_token"] = new_tokens["access_token"]
+                if "refresh_token" in new_tokens:
+                    user_tokens["refresh_token"] = new_tokens["refresh_token"]
+                emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+            else:
+                raise err
+        return jsonify({"emails": emails})
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch Gmail emails: {str(e)}"}), 500
+
+@app.route("/outlook/auth-url", methods=["GET"])
+def outlook_auth_url():
+    redirect_uri = request.args.get("redirect_uri") or "http://localhost:3000/outlook/callback"
+    url = get_outlook_auth_url(redirect_uri)
+    return jsonify({"auth_url": url})
+
+@app.route("/outlook/callback", methods=["GET"])
+def outlook_callback():
+    code = request.args.get("code")
+    redirect_uri = request.args.get("redirect_uri") or "http://localhost:3000/outlook/callback"
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    
+    if not code:
+        return jsonify({"error": "Authorization code is missing"}), 400
+        
+    try:
+        tokens = get_outlook_tokens(code, redirect_uri)
+        if username not in TOKEN_STORE:
+            TOKEN_STORE[username] = {}
+        TOKEN_STORE[username]["outlook"] = tokens
+        return jsonify({"message": "Outlook connected successfully"})
+    except Exception as e:
+        return jsonify({"error": f"Failed to exchange Outlook code: {str(e)}"}), 500
+
+@app.route("/outlook/emails", methods=["GET"])
+def outlook_emails():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    user_tokens = TOKEN_STORE.get(username, {}).get("outlook")
+    
+    if not user_tokens:
+        return jsonify({"error": "Outlook account not connected"}), 401
+        
+    try:
+        try:
+            emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
+        except requests.exceptions.HTTPError as err:
+            if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                user_tokens["access_token"] = new_tokens["access_token"]
+                if "refresh_token" in new_tokens:
+                    user_tokens["refresh_token"] = new_tokens["refresh_token"]
+                emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+            else:
+                raise err
+        return jsonify({"emails": emails})
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch Outlook emails: {str(e)}"}), 500
+
+@app.route("/scan-emails", methods=["POST"])
+def scan_emails_route():
+    data = request.get_json(silent=True) or {}
+    provider = data.get("provider", "").lower()
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    
+    if provider not in ("gmail", "outlook"):
+        return jsonify({"error": "Invalid provider. Must be 'gmail' or 'outlook'."}), 400
+        
+    user_tokens = TOKEN_STORE.get(username, {}).get(provider)
+    if not user_tokens:
+        return jsonify({"error": f"{provider.capitalize()} account not connected."}), 401
+        
+    try:
+        if provider == "gmail":
+            try:
+                emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
+            except requests.exceptions.HTTPError as err:
+                if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                    new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                    user_tokens["access_token"] = new_tokens["access_token"]
+                    emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                else:
+                    raise err
+        else:
+            try:
+                emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
+            except requests.exceptions.HTTPError as err:
+                if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                    new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                    user_tokens["access_token"] = new_tokens["access_token"]
+                    emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                else:
+                    raise err
+                    
+        scan_results = scan_emails_with_model(emails)
+        return jsonify(scan_results)
+    except Exception as e:
+        return jsonify({"error": f"Email scan execution failed: {str(e)}"}), 500
+
+
+imap_store.init_db()
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+
+def _run_imap_scan(username):
+    """Runs inside the scheduler thread: fetches, classifies and persists new emails."""
+    conn_row = imap_store.get_connection(username)
+    if not conn_row:
+        return
+    try:
+        password = decrypt_secret(conn_row["encrypted_password"])
+        emails = imap_connector.fetch_imap_emails(
+            conn_row["host"], conn_row["port"], conn_row["imap_username"], password, limit=50
+        )
+        with app.app_context():
+            scan_results = scan_emails_with_model(emails)
+        imap_store.save_scan_results(username, scan_results["emails"])
+        imap_store.update_last_scan(username)
+    except Exception as e:
+        print(f"[imap-scan] scheduled scan failed for {username}: {e}")
+
+
+def _schedule_user_job(username, interval_minutes):
+    scheduler.add_job(
+        _run_imap_scan,
+        "interval",
+        minutes=interval_minutes,
+        id=f"imap_scan_{username}",
+        args=[username],
+        replace_existing=True,
+    )
+
+
+# Re-arm scheduled jobs for connections that were already active before this restart.
+for _row in imap_store.get_all_active_connections():
+    _schedule_user_job(_row["username"], _row["scan_interval_minutes"])
+
+
+def _require_username():
+    """The Node gateway authenticates the user and forwards their identity via this
+    header. We also verify the internal secret for security.
+    """
+    secret = request.headers.get("X-Internal-Secret")
+    expected_secret = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
+    if not secret or secret != expected_secret:
+        return None
+    username = request.headers.get("X-User-Username")
+    if not username:
+        return None
+    return username
+
+
+@app.route("/imap/connect", methods=["POST"])
+def imap_connect():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    data = request.get_json(silent=True) or {}
+
+    host = data.get("host", "").strip()
+    port = data.get("port", 993)
+    imap_username = data.get("imap_username", "").strip()
+    password = data.get("password", "")
+    scan_interval_minutes = data.get("scan_interval_minutes")
+    consent = data.get("consent", False)
+
+    if not host or not imap_username or not password:
+        return jsonify({"error": "host, imap_username and password are required"}), 400
+
+    if scan_interval_minutes not in imap_store.ALLOWED_INTERVALS:
+        return jsonify({"error": f"scan_interval_minutes must be one of {imap_store.ALLOWED_INTERVALS}"}), 400
+
+    if not consent:
+        return jsonify({"error": "Explicit consent is required before connecting an inbox"}), 400
+
+    try:
+        imap_connector.test_imap_connection(host, port, imap_username, password)
+    except imap_connector.ImapAuthError as e:
+        return jsonify({"error": f"Could not authenticate with the IMAP server: {e}"}), 401
+    except Exception as e:
+        return jsonify({"error": f"Could not connect to the IMAP server: {e}"}), 502
+
+    encrypted_password = encrypt_secret(password)
+    imap_store.save_connection(username, host, port, imap_username, encrypted_password, scan_interval_minutes)
+    _schedule_user_job(username, scan_interval_minutes)
+
+    return jsonify({
+        "message": "Inbox connected. Scheduled scanning is now active.",
+        "scan_interval_minutes": scan_interval_minutes,
+    })
+
+
+@app.route("/imap/status", methods=["GET"])
+def imap_status():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    conn_row = imap_store.get_connection(username)
+    if not conn_row:
+        return jsonify({"connected": False})
+
+    return jsonify({
+        "connected": True,
+        "host": conn_row["host"],
+        "imap_username": conn_row["imap_username"],
+        "scan_interval_minutes": conn_row["scan_interval_minutes"],
+        "consent_given_at": conn_row["consent_given_at"],
+        "last_scan_at": conn_row["last_scan_at"],
+    })
+
+
+@app.route("/imap/schedule", methods=["PUT"])
+def imap_schedule():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    data = request.get_json(silent=True) or {}
+    scan_interval_minutes = data.get("scan_interval_minutes")
+
+    if scan_interval_minutes not in imap_store.ALLOWED_INTERVALS:
+        return jsonify({"error": f"scan_interval_minutes must be one of {imap_store.ALLOWED_INTERVALS}"}), 400
+
+    if not imap_store.get_connection(username):
+        return jsonify({"error": "No connected inbox found for this account"}), 404
+
+    imap_store.update_schedule(username, scan_interval_minutes)
+    _schedule_user_job(username, scan_interval_minutes)
+    return jsonify({"message": "Scan schedule updated", "scan_interval_minutes": scan_interval_minutes})
+
+
+@app.route("/imap/disconnect", methods=["POST"])
+def imap_disconnect():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    if not imap_store.get_connection(username):
+        return jsonify({"error": "No connected inbox found for this account"}), 404
+
+    job_id = f"imap_scan_{username}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+    imap_store.delete_connection(username)
+    return jsonify({"message": "Inbox disconnected and stored credentials removed."})
+
+
+@app.route("/imap/scan-now", methods=["POST"])
+def imap_scan_now():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    conn_row = imap_store.get_connection(username)
+    if not conn_row:
+        return jsonify({"error": "No connected inbox found for this account"}), 404
+
+    try:
+        password = decrypt_secret(conn_row["encrypted_password"])
+    except CredentialEncryptionError as e:
+        return jsonify({"error": str(e)}), 500
+
+    try:
+        emails = imap_connector.fetch_imap_emails(
+            conn_row["host"], conn_row["port"], conn_row["imap_username"], password, limit=50
+        )
+        scan_results = scan_emails_with_model(emails)
+        imap_store.save_scan_results(username, scan_results["emails"])
+        imap_store.update_last_scan(username)
+        return jsonify(scan_results)
+    except imap_connector.ImapAuthError as e:
+        return jsonify({"error": f"IMAP authentication failed: {e}"}), 401
+    except Exception as e:
+        return jsonify({"error": f"Email scan execution failed: {e}"}), 500
+
+
+@app.route("/imap/scan-results", methods=["GET"])
+def imap_scan_results():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    limit = request.args.get("limit", default=100, type=int)
+    page = request.args.get("page", default=1, type=int)
+    offset = max(0, (page - 1) * limit)
+    history = imap_store.get_scan_history(username, limit=limit, offset=offset)
+    return jsonify({"results": history, "page": page, "limit": limit})
 
 
 if __name__ == "__main__":

@@ -7,4 +7,9 @@ node_modules/
 # Build output
 dist/
 build/
+# Output folder
+output/
+
+# IMAP connections/scan history (contains encrypted credentials)
+imap_connections.db
 

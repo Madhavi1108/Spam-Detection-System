@@ -1,3 +1,4 @@
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Docker Build](https://github.com/Userunknown84/Spam-Detection-System/actions/workflows/docker.yml/badge.svg)
 
@@ -27,6 +28,14 @@ Python ML API (Model Inference)
         ↓
 Prediction (Spam / Ham / Offensive)
 ```
+
+---
+## Routes
+
+Python: (http://localhost:5000 or http://127.0.0.1:5000)
+Node: (http://localhost:3000)
+Reactjs: (http://localhost:5173)
+
 
 ---
 ## System Stability & Environment Fixes
@@ -315,14 +324,14 @@ export default function App() {
 ```
 ---
 
-## 🗄️ Email Classification Database (Flask)
+## 🗄️ Email Classification Database (FastAPI)
 
-A MySQL-based system to store and manage classified email records.
+A MySQL-based system to store and manage classified email records (located in `fastapi_backend/`).
 
 ### Database Setup
 
 ```bash
-mysql -u root -p < backend/schema.sql
+mysql -u root -p < fastapi_backend/schema.sql
 ```
 
 ### API Endpoints
@@ -424,6 +433,180 @@ This merges `feedback_store.csv` with the original training dataset (`DATASET_PA
 
 ---
 
+## 🛡️ Email Header Analysis for Sender Verification
+
+Features:
+* **SPF validation**: Verifies if the email sender is authorized by the domain's SPF records.
+* **DKIM validation**: Confirms the email signature matches the sender's public keys.
+* **DMARC validation**: Validates whether alignment passes based on SPF/DKIM verification results.
+* **Return-Path analysis**: Checks for mismatches between the `From` address domain and `Return-Path` domain.
+* **Sender verification**: Identifies display name domain mismatch or domain alignment anomalies.
+
+### Scoring Logic
+* SPF Failure: +30 points
+* DKIM Failure: +30 points
+* DMARC Failure: +30 points
+* Return-Path Mismatch: +20 points
+* Domain Mismatch: +20 points
+
+### Trust Levels
+* `0–20` score: **Trusted**
+* `21–60` score: **Suspicious**
+* `61+` score: **High Risk**
+
+### Endpoint
+
+#### `POST /analyze-email-header`
+Supports both Option A (JSON body) and Option B (`multipart/form-data` with EML file upload).
+
+**Request (Option A - JSON):**
+```json
+{
+  "headers": "From: Alice <alice@example.com>\nReturn-Path: <spammer@evil.com>..."
+}
+```
+
+**Request (Option B - multipart/form-data):**
+Submit files (EML format) under key `file`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "trust_level": "Suspicious",
+  "risk_score": 45,
+  "findings": [
+    "SPF validation failed",
+    "Return-Path mismatch detected"
+  ]
+}
+```
+
+---
+
+## 📬 Gmail & Outlook Integration for Automatic Email Scanning
+
+Allows users to link their Gmail and Outlook accounts securely via OAuth 2.0 and automatically scan the latest incoming emails.
+
+### Features
+* **OAuth 2.0 Integration**: Authorize with Google and Microsoft to scan live inboxes.
+* **Inline Risk Scoring**: Integrates directly with the Sender Verification analysis module to show trust levels (Trusted, Suspicious, High Risk) for each email based on SPF, DKIM, and DMARC headers.
+* **Aggregated Insights**: Displays metrics cards showing Total, Spam/Risk, and Clean emails in the scanned inbox batch.
+* **Collapsible Email Reports**: Expand any scanned email to view the snippet and domain alignment validation details.
+
+### Environment Setup
+
+Add these credentials to your backend `.env` file:
+```env
+# Google OAuth 2.0 Credentials
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# Microsoft Graph OAuth 2.0 Credentials
+MICROSOFT_CLIENT_ID=your_microsoft_client_id
+MICROSOFT_CLIENT_SECRET=your_microsoft_client_secret
+```
+
+### Endpoints
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/gmail/auth-url` | Protected | Returns the Google OAuth 2.0 consent page URL |
+| `GET` | `/gmail/connect` | Protected | Exchanges the authorization code for Gmail access/refresh tokens |
+| `GET` | `/gmail/emails` | Protected | Fetches up to 50 of the latest Gmail emails |
+| `GET` | `/outlook/auth-url` | Protected | Returns the Microsoft Graph OAuth 2.0 consent page URL |
+| `GET` | `/outlook/connect` | Protected | Exchanges the authorization code for Microsoft Graph tokens |
+| `GET` | `/outlook/emails` | Protected | Fetches up to 50 of the latest Outlook emails |
+| `POST` | `/scan-emails` | Protected | Fetches latest emails for provider and runs ML classification and header verification |
+
+---
+
+## 🧠 Spam Pattern Insights & Analytics Dashboard
+
+Features:
+* **Top keywords frequency**: Displays the most common keywords associated with threats.
+* **Trending phrases**: Analyzes bigrams/trigrams to identify key word sequences in spam (e.g. `claim your prize`).
+* **Suspicious terms tracking**: Extracts recently flagged tokens from threat classifications.
+* **Category indicators**: Groups common threat indicators by category (Spam, Smishing, Offensive).
+
+### Endpoint
+
+#### `GET /spam-insights`
+Available on both the Node backend (`/spam-insights`, requires authentication) and the Flask ML API (`/spam-insights`).
+
+**Query Parameters:**
+- `limit` (optional, default: 10): Limits the number of keywords/phrases returned.
+- `category` (optional, e.g. `spam`): Filters the source metrics to a specific threat category.
+
+**Example Response:**
+```json
+{
+  "top_keywords": [
+    {"keyword": "free", "count": 45},
+    {"keyword": "prize", "count": 35}
+  ],
+  "trending_phrases": [
+    {"phrase": "click here now", "count": 25},
+    {"phrase": "claim your prize", "count": 20}
+  ],
+  "recent_suspicious_terms": [
+    "crypto giveaway",
+    "verify wallet"
+  ],
+  "category_indicators": {
+    "spam": ["free", "prize", "winner"],
+    "smishing": ["otp", "verify", "bank"],
+    "offensive": ["abusive", "hate"]
+  }
+}
+```
+
+---
+
+## 📁 Bulk Spam Detection
+
+Features:
+* **CSV upload**: Upload a CSV file containing either a `text` or `message` column header (case-insensitive) to run batch predictions.
+* **TXT upload**: Upload a TXT file containing one message per non-empty line.
+* **Bulk predictions**: Batch inference is performed efficiently on the ML model.
+* **Detection statistics**: Displays total messages, spam/non-spam counts, and spam percentages.
+* **CSV report export**: Downloadable CSV file containing the original message and predicted classification.
+
+### Endpoints
+
+#### `POST /bulk-predict`
+Requires `multipart/form-data` file upload with a key name of `file`.
+
+**Example Response:**
+```json
+{
+  "total_messages": 3,
+  "spam_count": 2,
+  "non_spam_count": 1,
+  "spam_percentage": 66.67,
+  "results": [
+    {
+      "message": "Congratulations! You won a free prize",
+      "prediction": "spam"
+    },
+    {
+      "message": "Meeting tomorrow at 10am",
+      "prediction": "ham"
+    }
+  ]
+}
+```
+
+#### `POST /bulk-predict/export`
+Requires `multipart/form-data` file upload with a key name of `file`. Returns a downloadable CSV report file:
+```csv
+message,prediction
+Congratulations! You won a free prize,spam
+Meeting tomorrow at 10am,ham
+```
+
+---
+
 ## 🎨 Theme Customization System
 
 The frontend now includes a fully customizable theme system that allows users to personalize the application's appearance.
@@ -459,6 +642,139 @@ Seamless theme switching without affecting application functionality.
 * React
 * React Native
 * Axios
+
+---
+
+## Spam Detection Inbox Scanner (Browser Extension)
+
+Chrome/Firefox extension (Manifest V3) that scans visible Gmail and Outlook web
+messages and shows an inline spam/smishing/offensive badge, using the existing
+Spam Detection System classification API as its backend. Implements issue #187.
+
+## How it works
+
+- Content scripts (`src/content/gmail.js`, `src/content/outlook.js`) find
+  message rows in the inbox list, extract the subject + preview text, and ask
+  the background service worker to classify it.
+- The background service worker (`src/background.js`) holds the API base URL
+  and an account token (set via the options page) and calls the existing
+  `POST /predict` endpoint on the Node backend.
+- Results are cached **in memory only**, per page load, keyed by the
+  provider's own message/thread id. Reloading the tab clears the cache.
+- Each badge has a rescan (↻) and dismiss (✕) control.
+
+## Install (development / unpacked)
+
+This extension is not on the Chrome Web Store or Firefox AMO — it ships as
+source code in this repo, inside the `extension/` folder. You need that
+folder on your local disk before a browser can load it.
+
+### Step 1: Get the `extension/` folder onto your machine
+
+Pick whichever is easiest for you:
+
+- **Clone the whole repo (recommended if you'll also run the backend):**
+  ```sh
+  git clone https://github.com/Rudra-clrscr/Spam-Detection-System.git
+  cd Spam-Detection-System
+  git checkout feature/187-browser-extension
+  ```
+  The extension lives at `Spam-Detection-System/extension`.
+
+- **Download just this PR's `extension/` folder as a zip, no git required:**
+  1. Go to <https://download-directory.github.io/>
+  2. Paste this URL and press enter:
+     `https://github.com/Rudra-clrscr/Spam-Detection-System/tree/feature/187-browser-extension/extension`
+  3. Unzip the downloaded file.
+
+
+
+### Step 2: Load it into your browser
+
+**Chrome / Edge / Brave:**
+1. Go to `chrome://extensions`, enable "Developer mode" (toggle, top-right).
+2. Click "Load unpacked" and select the `extension/` folder (the one
+   containing `manifest.json` directly — not its parent).
+3. You should see "Spam Detection Inbox Scanner" appear in the list with a
+   purple envelope icon and no error badge.
+
+**Firefox:**
+1. Go to `about:debugging#/runtime/this-firefox`.
+2. Click "Load Temporary Add-on…" and select `extension/manifest.json`.
+   (Temporary add-ons are removed when Firefox restarts — see
+   [web-ext](https://extensionworkshop.com/documentation/develop/web-ext-command-reference/)
+   for a persistent dev workflow.)
+
+## Configure
+
+1. Click the extension icon → "Open settings".
+2. Set the API base URL (defaults to `http://localhost:3000`, the Node
+   gateway used by the rest of this project).
+3. Log into the Spam Detection web app. If it's running locally at
+   `localhost:5173` (the Vite dev default), a content script
+   (`src/content/webapp-bridge.js`) picks up your login token from
+   `localStorage` automatically within a few seconds — no manual step needed.
+   Otherwise, open devtools on the web app's page, run
+   `localStorage.getItem('token')`, and paste the result into "Account token".
+
+If you deploy the frontend or backend somewhere other than `localhost`, add
+that origin to `host_permissions`/the relevant `content_scripts.matches`
+entry in `manifest.json` before loading the extension (or use
+`chrome.permissions.request` — out of scope for this first pass).
+
+## Privacy
+
+- Only the subject + a short preview snippet (truncated to 500 characters) is
+  sent to the classification API per message — never the full message body.
+- Classification results are kept in memory only, scoped to the current page
+  load. Nothing is written to `chrome.storage` or disk except your API base
+  URL and account token (used to authenticate to your own backend).
+- Dismissing a flag only affects local in-memory state; it does not call the
+  backend.
+
+## Known limitations
+
+- Gmail/Outlook DOM selectors (`src/content/gmail.js`, `src/content/outlook.js`)
+  are based on current unofficial markup and **will break** if Google/Microsoft
+  change their markup. If badges stop appearing, inspect a message row in
+  devtools and update the selectors at the top of the relevant file.
+- Loaded unpacked against a real, logged-in Gmail inbox: badges rendered on
+  visible rows, and the classification pipeline (content script → background
+  worker → Node `/predict` → Flask ML API) was confirmed via backend logs to
+  return real Safe/Spam/Smishing predictions for real message subjects/
+  previews. Visual confirmation that every badge displays the correct label
+  in the browser (vs. a stale/failed state) is still pending re-check after
+  a backend restart during testing. Outlook web has not been separately
+  verified live — its selectors are still best-effort.
+- A failed scan (e.g. backend temporarily unreachable) renders a "Scan
+  failed" badge and is **not cached**, so it retries automatically the next
+  time the inbox DOM updates — this is intentional, not a bug, but can look
+  alarming if every row shows it briefly while the backend is still starting
+  up.
+
+## Publishing (optional follow-up)
+
+This PR ships the extension as source only — it is not published to any
+store. Getting a one-click "Add to Chrome"/"Add to Firefox" install requires
+the project maintainer to submit it under their own developer account. Draft
+listing copy, a privacy policy, permission justifications, and icons are in
+`store-listing/` and `icons/` to make that easier later; real screenshots
+still need to be captured from a live browser session (see
+`store-listing/screenshots/README.md`).
+
+## Tests
+
+Pure logic (caching, text truncation, badge mapping) is covered by
+`node --test`:
+
+```sh
+cd extension
+npm test
+```
+
+DOM scanning and the background/options/popup UI require a real browser and
+are not covered by automated tests in this PR.
+
 
 ---
 

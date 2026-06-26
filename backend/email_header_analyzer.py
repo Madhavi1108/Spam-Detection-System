@@ -175,7 +175,7 @@ def analyze_headers(headers_text):
     n_dkim = norm(dkim)
     n_dmarc = norm(dmarc)
     
-    # Calculate Risk Level
+    # Calculate Risk Level (legacy)
     # 1. Trusted: all pass, domains match
     if n_spf == "pass" and n_dkim == "pass" and n_dmarc == "pass" and return_path_match and sender_domain_match:
         risk_level = "Trusted"
@@ -185,6 +185,39 @@ def analyze_headers(headers_text):
     # 3. Suspicious: Missing headers or one of them failed, etc.
     else:
         risk_level = "Suspicious"
+
+    # Calculate Weighted Risk Score & Findings (new)
+    risk_score = 0
+    findings = []
+    
+    if spf.lower() in ("fail", "softfail"):
+        risk_score += 30
+        findings.append("SPF validation failed")
+        
+    if dkim.lower() == "fail":
+        risk_score += 30
+        findings.append("DKIM validation failed")
+        
+    if dmarc.lower() == "fail":
+        risk_score += 30
+        findings.append("DMARC validation failed")
+        
+    if not return_path_match:
+        risk_score += 20
+        findings.append("Return-Path mismatch detected")
+        
+    if not sender_domain_match:
+        risk_score += 20
+        findings.append("Sender domain mismatch detected")
+        
+    risk_score = min(risk_score, 100)
+    
+    if risk_score <= 20:
+        trust_level = "Trusted"
+    elif risk_score <= 60:
+        trust_level = "Suspicious"
+    else:
+        trust_level = "High Risk"
         
     return {
         "sender": from_email if from_email else "unknown",
@@ -194,5 +227,9 @@ def analyze_headers(headers_text):
         "return_path_match": return_path_match,
         "sender_domain_match": sender_domain_match,
         "risk_level": risk_level,
-        "reasons": reasons
+        "reasons": reasons,
+        "success": True,
+        "trust_level": trust_level,
+        "risk_score": risk_score,
+        "findings": findings
     }

@@ -1,18 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const WordCloud = ({ darkMode }) => {
   const [words, setWords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const fetchWordcloud = useCallback(() => {
+    setLoading(true);
+    setError(null);
     fetch('/api/wordcloud')
       .then(res => res.json())
       .then(data => {
         if (data.success) {
           setWords(data.data);
         } else {
-          setError(data.error);
+          setError(data.error || 'Request failed');
         }
         setLoading(false);
       })
@@ -22,12 +24,26 @@ const WordCloud = ({ darkMode }) => {
       });
   }, []);
 
+  useEffect(() => {
+    fetchWordcloud();
+  }, [fetchWordcloud]);
+
   if (loading) {
     return <p className="text-gray-400 text-sm animate-pulse">Loading word cloud...</p>;
   }
 
   if (error) {
-    return <p className="text-red-400 text-sm">⚠️ Could not load word data</p>;
+    return (
+      <div className="text-sm">
+        <p className="text-gray-400 mb-2">No data available yet.</p>
+        <button
+          onClick={fetchWordcloud}
+          className="text-xs font-semibold underline text-indigo-400 hover:text-indigo-300"
+        >
+          🔄 Retry
+        </button>
+      </div>
+    );
   }
 
   if (!words || words.length === 0) {

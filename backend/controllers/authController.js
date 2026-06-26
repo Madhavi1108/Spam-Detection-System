@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const { validationResult } = require('express-validator');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
@@ -151,4 +152,99 @@ const googleLogin = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, googleLogin };
+const updateAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { avatarUrl },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({ message: 'Avatar updated successfully', user });
+  } catch (err) {
+    console.error('Avatar upload error:', err);
+    res.status(500).json({ error: 'Server error. Please try again.' });
+  }
+};
+
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      // Send a successful response to prevent email enumeration
+      return res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+    }
+
+    // Generate token using password hash to make it single-use
+    const secret = process.env.JWT_SECRET + user.password;
+    const token = jwt.sign({ id: user._id, email: user.email }, secret, { expiresIn: '15m' });
+
+    // Mock reset link
+    const resetLink = `http://localhost:3000/reset-password/${user._id}/${token}`;
+
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.ethereal.email',
+      port: process.env.EMAIL_PORT || 587,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      await transporter.sendMail({
+        from: '"Spam Detection System" <noreply@spamdetection.local>',
+        to: user.email,
+        subject: 'Password Reset Request',
+        text: `Please use the following link to reset your password: ${resetLink} \n\nThis link expires in 15 minutes.`,
+      });
+    } else {
+      console.log(`[DEMO] Password Reset Link for ${user.email}: ${resetLink}`);
+    }
+
+    res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ error: 'Server error. Please try again later.' });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const { id, token } = req.params;
+    const { password } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired token.' });
+    }
+
+    const secret = process.env.JWT_SECRET + user.password;
+    try {
+      jwt.verify(token, secret);
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid or expired token.' });
+    }
+
+    user.password = password;
+    await user.save();
+
+    res.json({ message: 'Password has been successfully reset. You can now login.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Server error. Please try again later.' });
+  }
+};
+
+module.exports = { register, login, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword };

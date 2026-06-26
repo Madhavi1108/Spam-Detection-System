@@ -5,6 +5,9 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { GoogleLogin } from '@react-oauth/google';
 import '../App.css';
+import SpamLogo from "/src/assets/SpamLogo.png";
+import { Eye, EyeOff } from "lucide-react";
+
 
 const Login = () => {
   const [form, setForm] = useState({ email: '', password: '' });
@@ -13,6 +16,7 @@ const Login = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
   const { activeTheme, isDark } = useTheme();
+   const [showPassword, setShowPassword] = useState(false);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -59,13 +63,13 @@ const Login = () => {
   };
 
   return (
-    <div className={`min-h-screen flex items-center justify-center px-4 transition-all duration-500 ${
-      isDark ? activeTheme.dark : activeTheme.light
-    }`}>
-      <div className={`w-full max-w-md backdrop-blur-xl border rounded-3xl shadow-2xl p-8 sm:p-10 transition-all duration-500 ${
-        isDark ? activeTheme.cardDark : activeTheme.card
+    <div className={`min-h-screen flex items-center justify-center px-4 transition-all duration-500 ${isDark ? activeTheme.dark : activeTheme.light
       }`}>
-        <h2 className="text-3xl font-extrabold text-center mb-2">📩 Spam Detector</h2>
+  // Line 68 change: 
+// Add a slightly distinct border color tint and change shadow-2xl to shadow-[0_20px_50px_rgba(0,0,0,0.3)]
+className={`w-full max-w-md backdrop-blur-xl border border-white/20 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] p-8 sm:p-10 transition-all duration-300`}
+        
+        <h2 className="flex items-center justify-center gap-3 text-3xl font-extrabold mb-2"><img src={SpamLogo} alt="Spam Logo" className="w-24 h-16 object-contain"></img> Spam Detector</h2>
         <p className="text-center opacity-70 mb-8 text-sm font-semibold">Sign in to your account</p>
 
         {error && (
@@ -83,30 +87,56 @@ const Login = () => {
               value={form.email}
               onChange={handleChange}
               placeholder="you@example.com"
-              className={`w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 transition-all ${
-                isDark ? activeTheme.inputDark : activeTheme.input
-              }`}
+              className={`w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 transition-all ${isDark ? activeTheme.inputDark : activeTheme.input
+                }`}
             />
           </div>
+
+
           <div>
-            <label className="block text-sm font-semibold mb-2 opacity-80">Password</label>
-            <input
-              type="password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              placeholder="••••••••"
-              className={`w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 transition-all ${
-                isDark ? activeTheme.inputDark : activeTheme.input
-              }`}
-            />
+            <label className="block text-sm font-semibold mb-2 opacity-80">
+              Password
+            </label>
+
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                value={form.password}
+                onChange={handleChange}
+                placeholder="Min. 6 characters"
+                className={`w-full px-4 py-3 pr-12 border rounded-xl outline-none focus:ring-2 transition-all ${isDark ? activeTheme.inputDark : activeTheme.input
+                  }`}
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center text-gray-500 focus:outline-none"
+              >
+                {showPassword ? (
+                  <EyeOff size={20} strokeWidth={2} />
+                ) : (
+                  <Eye size={20} strokeWidth={2} />
+                )}
+              </button>
+            </div>
+            
+            <div className="flex justify-end mt-2">
+              <Link to="/forgot-password" className="text-sm text-blue-600 dark:text-blue-450 hover:underline font-semibold">
+                Forgot Password?
+              </Link>
+            </div>
           </div>
+
+
+
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-3.5 rounded-xl font-bold transition-all active:scale-95 shadow-md ${
-              activeTheme.accent
-            } ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
+            className={`w-full py-3.5 rounded-xl font-bold transition-all active:scale-95 shadow-md ${activeTheme.accent
+              } ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
@@ -118,7 +148,7 @@ const Login = () => {
             <span className="px-3 text-xs opacity-65 font-semibold uppercase">Or continue with</span>
             <div className="border-b border-gray-300 dark:border-gray-700 flex-grow"></div>
           </div>
-          
+
           <div className="w-full flex justify-center">
             <GoogleLogin
               onSuccess={handleGoogleSuccess}

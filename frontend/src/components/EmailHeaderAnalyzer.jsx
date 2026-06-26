@@ -4,16 +4,18 @@ import api from "../utils/axiosInstance";
 
 export default function EmailHeaderAnalyzer() {
   const [headers, setHeaders] = useState("");
+  const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const { isDark, activeTheme } = useTheme();
 
   const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
     
     setError("");
+    setFile(selectedFile);
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target.result;
@@ -28,11 +30,11 @@ export default function EmailHeaderAnalyzer() {
     reader.onerror = () => {
       setError("Failed to read EML file.");
     };
-    reader.readAsText(file);
+    reader.readAsText(selectedFile);
   };
 
   const handleAnalyze = async () => {
-    if (!headers.trim()) {
+    if (!headers.trim() && !file) {
       setError("Please paste email headers or upload a .eml file.");
       return;
     }
@@ -42,10 +44,25 @@ export default function EmailHeaderAnalyzer() {
     setResult(null);
 
     try {
-      const res = await api.post(
-        `${import.meta.env.VITE_API_URI || ""}/analyze-email-header`,
-        { headers: headers }
-      );
+      let res;
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        res = await api.post(
+          `${import.meta.env.VITE_API_URI || ""}/analyze-email-header`,
+          formData,
+          {
+            headers: {
+              "Content-Type": "multipart/form-data",
+            },
+          }
+        );
+      } else {
+        res = await api.post(
+          `${import.meta.env.VITE_API_URI || ""}/analyze-email-header`,
+          { headers: headers }
+        );
+      }
       setResult(res.data);
     } catch (err) {
       console.error(err);
@@ -127,7 +144,10 @@ export default function EmailHeaderAnalyzer() {
             rows="5"
             placeholder="Paste raw email headers here..."
             value={headers}
-            onChange={(e) => setHeaders(e.target.value)}
+            onChange={(e) => {
+              setHeaders(e.target.value);
+              setFile(null);
+            }}
           />
         </div>
 
@@ -149,6 +169,7 @@ export default function EmailHeaderAnalyzer() {
           <button
             onClick={() => {
               setHeaders("");
+              setFile(null);
               setResult(null);
               setError("");
             }}
@@ -165,20 +186,45 @@ export default function EmailHeaderAnalyzer() {
       {result && (
         <div className="mt-3 border border-slate-350/20 rounded-2xl p-4 bg-slate-500/5 transition-all duration-300">
           {/* Security Result Card */}
-          <div className={`p-4 rounded-xl font-bold text-center border mb-4 ${getStatusBg(result.status)} ${getStatusColor(result.status)}`}>
+          <div className={`p-4 rounded-xl font-bold text-center border mb-4 ${getStatusBg(result.trust_level || result.status)} ${getStatusColor(result.trust_level || result.status)}`}>
             <div className="text-lg mb-1 flex items-center justify-center gap-1.5">
-              {result.status === "Trusted" && <span>🛡️ Trusted Sender</span>}
-              {result.status === "High Risk" && <span>🚨 High Risk Sender</span>}
-              {result.status === "Suspicious" && <span>⚠️ Suspicious Sender</span>}
+              {(result.trust_level || result.status) === "Trusted" && <span>🛡️ Trust Level: Trusted</span>}
+              {(result.trust_level || result.status) === "High Risk" && <span>🚨 Trust Level: High Risk</span>}
+              {(result.trust_level || result.status) === "Suspicious" && <span>⚠️ Trust Level: Suspicious</span>}
             </div>
-            <p className="text-[11px] font-semibold opacity-90 mt-1 leading-relaxed">
-              {result.status === "Trusted" && "The sender domain successfully authenticated and aligned."}
-              {result.status === "High Risk" && "Critical authentication failures or sender domain spoofing detected."}
-              {result.status === "Suspicious" && "Authentication records are incomplete or domain alignment is missing."}
+            {result.risk_score !== undefined && (
+              <p className="text-sm font-extrabold mt-1">
+                Risk Score: {result.risk_score}/100
+              </p>
+            )}
+            <p className="text-[11px] font-semibold opacity-90 mt-2 leading-relaxed">
+              {(result.trust_level || result.status) === "Trusted" && "The sender domain successfully authenticated and aligned."}
+              {(result.trust_level || result.status) === "High Risk" && "Critical authentication failures or sender domain spoofing detected."}
+              {(result.trust_level || result.status) === "Suspicious" && "Authentication records are incomplete or domain alignment is missing."}
             </p>
           </div>
 
           <div className="flex flex-col gap-3">
+            {/* Findings List */}
+            {result.findings && (
+              <div className={`p-3 rounded-xl border text-left text-xs ${isDark ? "bg-slate-900/30 border-slate-800" : "bg-white/40 border-slate-200"}`}>
+                <span className="text-[10px] font-bold block opacity-60 mb-2 uppercase tracking-wider">Findings</span>
+                {result.findings.length > 0 ? (
+                  <ul className="space-y-1 font-semibold">
+                    {result.findings.map((finding, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 text-red-650 dark:text-red-350">
+                        <span className="font-extrabold text-red-650 dark:text-red-400">✓</span>
+                        <span>{finding}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-green-600 dark:text-green-400 font-bold flex items-center gap-1.5">
+                    <span>✓</span> All authentication checks passed successfully. No anomalies detected.
+                  </p>
+                )}
+              </div>
+            )}
             {/* Details Grid */}
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className={`p-2.5 rounded-xl border ${isDark ? "bg-slate-900/30 border-slate-800" : "bg-white/40 border-slate-200"}`}>

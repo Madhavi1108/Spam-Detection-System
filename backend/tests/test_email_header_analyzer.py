@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 from pathlib import Path
@@ -26,19 +27,45 @@ Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com;
 Subject: Hello
 """
 
-SPOOFED_HEADERS = """From: Alice <alice@example.com>
-Return-Path: <spammer@evil.com>
-Authentication-Results: mx.google.com; spf=fail (google.com: domain of spammer@evil.com does not designate 192.0.2.2 as permitted sender) smtp.mailfrom=spammer@evil.com; dkim=fail header.i=@example.com; dmarc=fail header.from=example.com
+SPF_FAIL_HEADERS = """From: Alice <alice@example.com>
+Return-Path: <alice@example.com>
+Authentication-Results: mx.google.com; spf=fail; dkim=pass header.i=@example.com; dmarc=pass header.from=example.com
 DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; h=from:to:subject; bh=hash; b=sig
-Received: from mail.evil.com (mail.evil.com [192.0.2.2]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
+Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
 Subject: Hello
 """
 
-MISSING_HEADERS = """From: Unknown <unknown@domain.com>
-Return-Path: <unknown@domain.com>
-Subject: Question
+DKIM_FAIL_HEADERS = """From: Alice <alice@example.com>
+Return-Path: <alice@example.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=fail; dmarc=pass header.from=example.com
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; h=from:to:subject; bh=hash; b=sig
+Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
+Subject: Hello
 """
 
+DMARC_FAIL_HEADERS = """From: Alice <alice@example.com>
+Return-Path: <alice@example.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=fail
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; h=from:to:subject; bh=hash; b=sig
+Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
+Subject: Hello
+"""
+
+RETURN_PATH_MISMATCH_HEADERS = """From: Alice <alice@example.com>
+Return-Path: <spammer@evil.com>
+Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; h=from:to:subject; bh=hash; b=sig
+Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
+Subject: Hello
+"""
+
+DOMAIN_MISMATCH_HEADERS = """From: Alice <alice@microsoft.com>
+Return-Path: <alice@microsoft.com>
+Authentication-Results: mx.google.com; spf=pass smtp.mailfrom=attacker.com; dkim=pass header.d=attacker.com; dmarc=pass header.from=attacker.com
+DKIM-Signature: v=1; a=rsa-sha256; d=attacker.com; s=selector; h=from:to:subject; bh=hash; b=sig
+Received: from mail.example.com (mail.example.com [192.0.2.1]) by mx.google.com; Wed, 17 Jun 2026 12:00:00 -0700
+Subject: Hello
+"""
 
 @pytest.fixture
 def client():
@@ -46,65 +73,94 @@ def client():
     with api_module.app.test_client() as c:
         yield c
 
-
 class TestEmailHeaderAnalyzer:
-    """Covers unit and integration testing of the Email Sender Authenticity module."""
-
-    def test_legitimate_email_trusted(self):
+    def test_valid_trusted_email(self):
         res = analyze_headers(LEGIT_HEADERS)
-        assert res["risk_level"] == "Trusted"
-        assert res["spf"] == "pass"
-        assert res["dkim"] == "pass"
-        assert res["dmarc"] == "pass"
-        assert res["return_path_match"] is True
-        assert res["sender_domain_match"] is True
-        assert len(res["reasons"]) == 0
+        assert res["success"] is True
+        assert res["trust_level"] == "Trusted"
+        assert res["risk_score"] == 0
+        assert len(res["findings"]) == 0
 
-    def test_spoofed_email_high_risk(self):
-        res = analyze_headers(SPOOFED_HEADERS)
-        assert res["risk_level"] == "High Risk"
-        assert res["spf"] == "fail"
-        assert res["dkim"] == "fail"
-        assert res["dmarc"] == "fail"
-        assert res["return_path_match"] is False
-        assert "SPF authentication failed" in res["reasons"]
-        assert "DKIM authentication failed" in res["reasons"]
-        assert "DMARC authentication failed" in res["reasons"]
-        assert "Return-Path mismatch" in res["reasons"]
+    def test_spf_failure(self):
+        res = analyze_headers(SPF_FAIL_HEADERS)
+        assert res["success"] is True
+        assert res["trust_level"] == "Suspicious"
+        assert res["risk_score"] == 30
+        assert "SPF validation failed" in res["findings"]
 
-    def test_missing_auth_headers_suspicious(self):
-        res = analyze_headers(MISSING_HEADERS)
-        assert res["risk_level"] == "Suspicious"
-        assert res["spf"] == "none"
-        assert res["dkim"] == "none"
-        assert res["dmarc"] == "none"
-        assert "SPF authentication missing" in res["reasons"]
-        assert "DKIM authentication missing" in res["reasons"]
-        assert "DMARC authentication missing" in res["reasons"]
+    def test_dkim_failure(self):
+        res = analyze_headers(DKIM_FAIL_HEADERS)
+        assert res["success"] is True
+        assert res["trust_level"] == "Suspicious"
+        assert res["risk_score"] == 30
+        assert "DKIM validation failed" in res["findings"]
 
-    def test_api_endpoint_legitimate(self, client):
-        response = client.post("/analyze-email-header", json={"headers": LEGIT_HEADERS})
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["status"] == "Trusted"
-        assert data["analysis"]["sender"] == "alice@example.com"
-        assert data["analysis"]["risk_level"] == "Trusted"
+    def test_dmarc_failure(self):
+        res = analyze_headers(DMARC_FAIL_HEADERS)
+        assert res["success"] is True
+        assert res["trust_level"] == "Suspicious"
+        assert res["risk_score"] == 30
+        assert "DMARC validation failed" in res["findings"]
 
-    def test_api_endpoint_spoofed(self, client):
-        response = client.post("/analyze-email-header", json={"headers": SPOOFED_HEADERS})
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["status"] == "High Risk"
-        assert data["analysis"]["risk_level"] == "High Risk"
+    def test_return_path_mismatch(self):
+        res = analyze_headers(RETURN_PATH_MISMATCH_HEADERS)
+        assert res["success"] is True
+        assert res["risk_score"] == 20
+        assert res["trust_level"] == "Trusted"
+        assert "Return-Path mismatch detected" in res["findings"]
 
-    def test_api_endpoint_missing(self, client):
-        response = client.post("/analyze-email-header", json={"headers": MISSING_HEADERS})
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["status"] == "Suspicious"
-        assert data["analysis"]["risk_level"] == "Suspicious"
+    def test_domain_mismatch(self):
+        res = analyze_headers(DOMAIN_MISMATCH_HEADERS)
+        assert res["success"] is True
+        assert res["risk_score"] == 20
+        assert res["trust_level"] == "Trusted"
+        assert "Sender domain mismatch detected" in res["findings"]
 
-    def test_api_endpoint_missing_input_error(self, client):
+    def test_invalid_header_input(self, client):
+        # API post empty payload
         response = client.post("/analyze-email-header", json={})
         assert response.status_code == 400
         assert "error" in response.get_json()
+
+        # API post empty headers string
+        response = client.post("/analyze-email-header", json={"headers": ""})
+        assert response.status_code == 400
+
+    def test_empty_file_upload(self, client):
+        data = {
+            "file": (io.BytesIO(b""), "empty.eml")
+        }
+        response = client.post("/analyze-email-header", data=data, content_type="multipart/form-data")
+        assert response.status_code == 400
+        assert "No email headers provided" in response.get_json()["error"]
+
+    def test_api_endpoint_json_trusted(self, client):
+        response = client.post("/analyze-email-header", json={"headers": LEGIT_HEADERS})
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["trust_level"] == "Trusted"
+        assert data["risk_score"] == 0
+        assert len(data["findings"]) == 0
+
+    def test_api_endpoint_multipart_eml_trusted(self, client):
+        data = {
+            "file": (io.BytesIO(LEGIT_HEADERS.encode("utf-8")), "legit.eml")
+        }
+        response = client.post("/analyze-email-header", data=data, content_type="multipart/form-data")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["trust_level"] == "Trusted"
+        assert data["risk_score"] == 0
+
+    def test_api_endpoint_multipart_eml_non_utf8(self, client):
+        headers_non_utf8 = LEGIT_HEADERS + "X-Custom: ñ\n"
+        data = {
+            "file": (io.BytesIO(headers_non_utf8.encode("latin-1")), "latin1.eml")
+        }
+        response = client.post("/analyze-email-header", data=data, content_type="multipart/form-data")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["trust_level"] == "Trusted"

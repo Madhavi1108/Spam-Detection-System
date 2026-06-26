@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export default function FeatureImportance({ darkMode }) {
   const [features, setFeatures] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetch("http://127.0.0.1:5000/importance")
+  const fetchImportance = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    fetch("/importance")
       .then((r) => {
-        if (!r.ok) throw new Error("Failed to fetch");
+        if (!r.ok) throw new Error(`Request failed (${r.status})`);
         return r.json();
       })
       .then((data) => {
@@ -20,6 +22,10 @@ export default function FeatureImportance({ darkMode }) {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    fetchImportance();
+  }, [fetchImportance]);
 
   const max = features.length > 0
     ? Math.max(...features.map((f) => Math.abs(f.importance)))
@@ -38,7 +44,15 @@ export default function FeatureImportance({ darkMode }) {
       )}
 
       {error && (
-        <p className="text-sm text-red-400">⚠️ Could not load data: {error}</p>
+        <div className="text-sm">
+          <p className="text-gray-400 mb-2">No data available yet.</p>
+          <button
+            onClick={fetchImportance}
+            className="text-xs font-semibold underline text-indigo-400 hover:text-indigo-300"
+          >
+            🔄 Retry
+          </button>
+        </div>
       )}
 
       {!loading && !error && features.length === 0 && (

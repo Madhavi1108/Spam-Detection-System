@@ -14,6 +14,16 @@ const { v4: uuidv4 } = require('uuid');
 const helmet = require('helmet');
 const axios = require("axios");
 
+// ===== STARTUP TIMER =====
+const SERVER_START_TIME = Date.now();
+const startupLogs = [];
+
+const logStartupTime= (component, startTime) => {
+  const elapsed = Date.now() - startTime;
+  startupLogs.push({ component, elapsed });
+    console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
+};
+
 // Configure global request interceptor to append the internal secret API key
 axios.interceptors.request.use(
   (config) => {
@@ -119,11 +129,12 @@ const monitorConnectionPool = () => {
 };
 
 //Call after MONGODB connection is established
+const mongoStart = Date.now();
 mongoose
     .connect(process.env.MONGODB_URI)
     .then(() => {
-        console.log("✅ MongoDB connected");
-        monitorConnectionPool(); // 👈 Add this line
+        console.log('MongoDB', mongoStart);
+        monitorConnectionPool(); 
         seedAdminUser();
     })
     .catch((err) => console.error("❌ MongoDB connection error:", err));
@@ -915,7 +926,9 @@ app.use(errorHandler);
 
 const PORT = config.port;
 const server = app.listen(PORT, () => {
+  const totalTime = Date.now() - SERVER_START_TIME;
   displayBanner();
+  console.log(`⏱️ Total startup time: ${totalTime}ms`);
 });
 
 // ========================================

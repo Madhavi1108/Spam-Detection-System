@@ -42,8 +42,6 @@ function SpamDetector() {
   };
 
   const [darkMode, setDarkMode] = useState(false);
-
-  const [darkMode, setDarkMode] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [theme, setTheme] = useState("ocean");
   const [showThemes, setShowThemes] = useState(false);

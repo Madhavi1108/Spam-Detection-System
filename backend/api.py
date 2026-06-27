@@ -13,6 +13,7 @@ from explanation_engine import ExplanationEngine
 from pathlib import Path
 from flask_cors import CORS
 import sys
+from filelock import FileLock
 import requests
 
 # Try to import NLTK for stopwords (optional)
@@ -366,16 +367,24 @@ def feedback():
     if not text or correct_label not in FEEDBACK_LABELS:
         return jsonify({"error": "Invalid feedback data"}), 400
 
-    file_exists = os.path.isfile(FEEDBACK_FILE)
-    with open(FEEDBACK_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["text", "predicted_label", "correct_label", "submitted_at"])
-        from datetime import datetime, timezone
-        writer.writerow([text, predicted_label, correct_label, datetime.now(timezone.utc).isoformat()])
+    lock_path = str(FEEDBACK_FILE) + '.lock'
 
-    return jsonify({"message": "Feedback recorded. Thank you!"}), 201
+    try:
+        with FileLock(lock_path, timeout=5):
+            file_exists = os.path.isfile(FEEDBACK_FILE)
+            with open(FEEDBACK_FILE, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["text", "predicted_label", "correct_label", "submitted_at"])
+                from datetime import datetime, timezone
+                writer.writerow([text, predicted_label, correct_label, datetime.now(timezone.utc).isoformat()])
 
+        return jsonify({"message": "Feedback recorded. Thank you!"}), 201
+    except Timeout:
+        return jsonify({"error": "Could not acquire lock on feedback file, please try again later."}), 503
+    except Exception as e:
+        app.logger.error(f"Failed to write feedback: {e}")
+        return jsonify({"error": "Failed to record feedback."}), 500
 
 @app.route("/analyze-email-header", methods=["POST"])
 def analyze_email_header():

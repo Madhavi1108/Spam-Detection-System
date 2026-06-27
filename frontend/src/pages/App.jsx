@@ -1,3 +1,4 @@
+// Force rebuild - trigger CI
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
@@ -655,14 +656,13 @@ function SpamDetector() {
             <EmailHeaderAnalyzer />
           )}
           <WordCloud darkMode={isDark} />
-        </div>
+                </div>
       </div>
-      </div>
+    </div>
     <Footer />
     <Chatbot />
     </div>
-    
-  );
+    );
 }
 
 export default SpamDetector;

@@ -31,6 +31,17 @@ function SpamDetector() {
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
   const [copied, setCopied] = useState(false);
+  const detectType = (text) => {
+    if(!text || text.trim().length === 0) return 'message';
+    const trimmed = text.trim();
+    if (trimmed.includes('http://') || trimmed.includes('https://')) return 'url';
+    if (trimmed.includes('@') && trimmed.includes('.')) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (emailRegex.test(trimmed)) return 'email';
+    }
+    if (trimmed.length < 160 && !trimmed.includes('\n')) return 'sms';
+    return 'message';
+  };
 
   const [darkMode, setDarkMode] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -399,7 +410,12 @@ function SpamDetector() {
                     : "Paste the full text or body of your email content here..."
               }
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setText(value);
+                const detected = detectType(value);
+                setType(detected);
+              }}
             />
 
             {text && (

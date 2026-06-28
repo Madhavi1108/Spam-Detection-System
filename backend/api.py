@@ -4,6 +4,7 @@ import joblib
 import numpy as np
 import os
 import re
+import hmac
 from collections import Counter
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -41,6 +42,37 @@ app = Flask(__name__)
 
 xai_engine = ExplanationEngine()
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
+
+# Shared secret that the trusted Node/Express backend attaches to every request
+# (see the axios interceptor in server.js). Enforcing it on every ML API call
+# ensures the model endpoints can't be hit directly by clients that merely have
+# network access to the Flask port.
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
+
+# Paths reachable without the internal secret (liveness/readiness probes).
+PUBLIC_PATHS = {"/", "/health"}
+
+
+@app.before_request
+def require_internal_secret():
+    # During automated tests the gate is off by default so unit tests can call
+    # ML routes directly; the dedicated security test opts in by setting
+    # app.config["ENFORCE_INTERNAL_SECRET"] = True. In real deployments TESTING
+    # is never set, so the gate is always active.
+    if app.config.get("TESTING") and not app.config.get("ENFORCE_INTERNAL_SECRET"):
+        return None
+    # Let CORS preflight requests through; they never carry custom headers.
+    if request.method == "OPTIONS":
+        return None
+    if request.path in PUBLIC_PATHS:
+        return None
+    provided = request.headers.get("X-Internal-Secret", "")
+    # Constant-time comparison avoids leaking the secret via timing.
+    if not provided or not hmac.compare_digest(provided, INTERNAL_SECRET):
+        return jsonify({
+            "error": "Forbidden: requests must originate from the trusted backend"
+        }), 403
+
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -628,9 +660,8 @@ def _require_username():
     """The Node gateway authenticates the user and forwards their identity via this
     header. We also verify the internal secret for security.
     """
-    secret = request.headers.get("X-Internal-Secret")
-    expected_secret = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
-    if not secret or secret != expected_secret:
+    secret = request.headers.get("X-Internal-Secret", "")
+    if not secret or not hmac.compare_digest(secret, INTERNAL_SECRET):
         return None
     username = request.headers.get("X-User-Username")
     if not username:

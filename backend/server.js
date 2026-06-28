@@ -86,6 +86,7 @@ const connectWithRetry = async (retries=5, delay=5000) => {
     try {
       await mongoose.connect(config.mongodbUri);
             console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
+            monitorConnectionPool();
             seedAdminUser();
             return true;
     } catch (err) {
@@ -108,16 +109,16 @@ const connectWithRetry = async (retries=5, delay=5000) => {
 
 //MONGODB CONNECTION POOL MONITORING
 const monitorConnectionPool = () => {
-  setInterval(() => {
+  const timer = setInterval(() => {
     try {
       const pool = mongoose.connection.client.topology.s.pool;
       if(pool) {
-        const size= pool.size||0;
-        const available= pool.availableConnections||0;
-        const used= pool.usedCount||0;
+        const size = pool.size || 0;
+        const available = pool.availableConnections || 0;
+        const used = pool.usedCount || 0;
         const usagePercent = size > 0 ? (used / size) * 100 : 0;
 
-        console.log(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
+        console.debug(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
 
         //Alert if usage exceeds 80%
         if(usagePercent > 80){
@@ -126,19 +127,12 @@ const monitorConnectionPool = () => {
       }
     } catch (err) {
     }
-  },3000); // every 3 seconds
+  }, 60000); // every 60 seconds
+
+  timer.unref(); // prevent this interval from blocking graceful shutdown
 };
 
-//Call after MONGODB connection is established
-const mongoStart = Date.now();
-mongoose
-    .connect(process.env.MONGODB_URI)
-    .then(() => {
-        console.log('MongoDB', mongoStart);
-        monitorConnectionPool(); 
-        seedAdminUser();
-    })
-    .catch((err) => console.error("❌ MongoDB connection error:", err));
+
 
 
 if(process.env.NODE_ENV === 'development'){
@@ -172,7 +166,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(helmet());
 app.use(compression());
-app.use(express.json());
 app.use(express.json({limit: '1mb'}));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use('/uploads', express.static('uploads'));
@@ -404,7 +397,7 @@ Sentry.captureException(error, {
 });
 
 
-console.log("History saved");
+
 
 // Protected: record user feedback on a prediction (forwarded to the ML API)
 const ML_API_BASE = (
@@ -748,7 +741,8 @@ app.get("/gmail/callback", async (req, res) => {
     if (!code) {
       return res.status(400).json({ error: "Authorization code is missing" });
     }
-    res.redirect(`http://localhost:5173/app?provider=gmail&code=${code}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/app?provider=gmail&code=${code}`);
   } catch (error) {
     console.error(error.message);
     res.status(500).json({ error: "Something went wrong" });
@@ -842,7 +836,8 @@ app.get("/outlook/callback", async (req, res) => {
     if (!code) {
       return res.status(400).json({ error: "Authorization code is missing" });
     }
-    res.redirect(`http://localhost:5173/app?provider=outlook&code=${code}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/app?provider=outlook&code=${code}`);
   } catch (error) {
     console.error(error.message);
     res.status(500).json({ error: "Something went wrong" });
@@ -1065,6 +1060,16 @@ app.use((err, req, res, next) => {
 
 app.use(errorHandler);
 
+// ========================================
+// START SERVER
+// ========================================
+
+const PORT = config.port;
+const server = app.listen(PORT, () => {
+  displayBanner();
+  const totalTime = Date.now() - SERVER_START_TIME;
+  displayBanner();
+  console.log(`⏱️ Total startup time: ${totalTime}ms`);
 // ====== PREDICTION STATISTICS ======
 app.get('/api/stats', protect, async (req, res) => {
     try {
@@ -1256,6 +1261,7 @@ app.get("/imap/scan-results", protect, async (req, res) => {
     console.error(error.message);
     res.status(500).json({ error: "Something went wrong" });
   }
+});
 });
 
 // ===== SEARCH HISTORY =====

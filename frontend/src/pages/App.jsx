@@ -9,6 +9,7 @@ import FeatureImportance from "../components/FeatureImportance";
 import History from "../components/History";
 import WordCloud from "../components/WordCloud";
 import FeedbackWidget from "../components/FeedbackWidget";
+import PredictionExplanation from "../components/PredictionExplanation";
 import Login from "./Login.jsx";
 import Register from "./Register.jsx";
 import EmailHeaderAnalyzer from "../components/EmailHeaderAnalyzer";
@@ -26,6 +27,7 @@ function SpamDetector() {
   const [text, setText] = useState("");
   const [result, setResult] = useState("");
   const [confidence, setConfidence] = useState(null);
+  const [explanation, setExplanation] = useState(null);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
   const [copied, setCopied] = useState(false);
@@ -41,6 +43,21 @@ function SpamDetector() {
     if (trimmed.length < 160 && !trimmed.includes('\n')) return 'sms';
     return 'message';
   };
+  if (!text || text.trim().length === 0) return 'message';
+  const trimmed = text.trim();
+  if (trimmed.includes('http://') || trimmed.includes('https://')) return 'url';
+  if (trimmed.includes('@') && trimmed.includes('.')) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (emailRegex.test(trimmed)) return 'email';
+  }
+  if (trimmed.length < 160 && !trimmed.includes('\n')) return 'sms';
+  return 'message';
+};
+
+  const [darkMode, setDarkMode] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [theme, setTheme] = useState("ocean");
+  const [showThemes, setShowThemes] = useState(false);
 
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState(() => {
@@ -51,7 +68,7 @@ function SpamDetector() {
     return "detector";
   });
 
-  const { user, logout } = useAuth();
+  const { user, login, logout } = useAuth();
   const handleLogout = () => {
     logout();
     localStorage.removeItem("user");
@@ -79,7 +96,10 @@ function SpamDetector() {
       setResult(res.data.prediction);
       setConfidence(res.data.confidence ?? null);
     } catch {
+      setExplanation(res.data.explanation ?? null);
+    } catch (error) {
       setResult("Error");
+      setExplanation(null);
     } finally {
       setLoading(false);
     }
@@ -164,6 +184,21 @@ function SpamDetector() {
             } catch(err) {
               alert('Failed to upload avatar: ' + (err.response?.data?.error || err.message));
             }
+             const file = e.target.files[0];
+             if (!file) return;
+             const formData = new FormData();
+             formData.append('avatar', file);
+             try {
+                const res = await api.post(`/api/v1/auth/avatar`, formData, {
+                   headers: { 
+                     'Content-Type': 'multipart/form-data'
+                   }
+                });
+                localStorage.setItem('user', JSON.stringify(res.data.user));
+                login(res.data.user);
+             } catch(err) {
+                alert('Failed to upload avatar: ' + (err.response?.data?.error || err.message));
+             }
           }} />
         </label>
         <span
@@ -562,6 +597,35 @@ Powered by Spam Detection System`;
         {copied ? '✅ Copied!' : '📋 Copy Full Report'}
       </button>
     </div>
+              {explanation && result !== "Error" && (
+                <PredictionExplanation explanation={explanation} result={result} />
+              )}
+
+              {result && result !== "Error" && type !== "url" && (
+                <FeedbackWidget
+                  key={`${text}|${result}|${confidence}`}
+                  text={text}
+                  predictedLabel={result}
+                  darkMode={isDark}
+                />
+              )}
+
+              <button
+                onClick={() => {
+                  setText("");
+                  setResult("");
+                  setConfidence(null);
+                  setExplanation(null);
+                  setType("message");
+                }}
+                className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
+                  isDark
+                    ? activeTheme.btnSecondaryDark
+                    : activeTheme.btnSecondary
+                }`}
+              >
+                Reset
+              </button>
 
     {/* Description */}
     <p className="text-sm opacity-75 leading-relaxed">

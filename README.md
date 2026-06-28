@@ -102,6 +102,16 @@ pickle.dump(vectorizer, open("vectorizer.pkl", "wb"))
 
 ## 🐍 Python API (Flask)
 
+### Running the Backend API
+
+This project contains two backend implementations. You can choose to run either Flask or FastAPI.
+
+**Option 1: Running Flask (api.py)**
+```bash
+cd backend
+python api.py
+```
+
 ### 📦 Install Dependencies
 
 ```bash
@@ -139,6 +149,78 @@ if __name__ == "__main__":
 ```bash
 npm install express axios cors
 ```
+
+## 🧠 Explainable AI (XAI)
+
+The Spam Detection System now returns human-readable explanation details with every prediction. This includes example reasons, matched spam keywords, triggered spam indicators, and a risk score.
+
+### 🧾 Prediction API Response
+
+```json
+{
+  "input": "Claim your reward now!",
+  "result": "spam",
+  "prediction": "spam",
+  "confidence": 1.2345,
+  "domain_analysis": {
+    "domains_found": [],
+    "max_risk_score": 0,
+    "overall_risk": "SAFE",
+    "details": []
+  },
+  "explanation": {
+    "score": 94,
+    "reasons": [
+      "Suspicious URL detected",
+      "Promotional keywords found",
+      "Urgency language detected"
+    ],
+    "matched_keywords": [
+      "claim",
+      "reward",
+      "free"
+    ],
+    "spam_patterns": {
+      "urls": true,
+      "capitalization": false,
+      "punctuation": false,
+      "urgency": true,
+      "promotional": true,
+      "financial": false,
+      "banking": false,
+      "otp": false,
+      "crypto": false,
+      "lottery": false,
+      "threat": false,
+      "emoji": false,
+      "suspicious_domain": false,
+      "phone_number": false,
+      "shortened_url": false
+    },
+    "num_indicators": 3,
+    "top_indicators": [
+      "Suspicious URL detected",
+      "Promotional keywords found",
+      "Urgency language detected"
+    ],
+    "summary": "3 indicators triggered"
+  }
+}
+```
+
+### 💡 Example Request
+
+```bash
+curl -X POST http://localhost:5000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Urgent! Claim your prize now at https://bit.ly/offer","type":"message"}'
+```
+
+### 📌 Notes
+
+* The response is backward compatible with existing integrations.
+* `result` and `prediction` both return the same label.
+* `explanation` is optional in older API clients, but modern clients can use it to display detailed spam reasoning.
 
 ## Mongo Db Atlas Backend
 .env
@@ -795,5 +877,3 @@ This project is open-source and available under the MIT License.
 You are free to use, modify, and distribute this project for personal or commercial use, provided that proper credit is given.
 
 For more details, see the [LICENSE](LICENSE) file.
-
-

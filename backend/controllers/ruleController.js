@@ -3,10 +3,26 @@ const Rule = require("../models/Rule");
 // Get all rules for the logged-in user
 const getRules = async (req, res) => {
   try {
-    const rules = await Rule.find({ user: req.user.id }).sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 100;
+    const safeLimit = Math.min(limit, 100);
+    const skip = (page - 1) * safeLimit;
+
+    const total = await Rule.countDocuments({ user: req.user.id });
+    const rules = await Rule.find({ user: req.user.id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(safeLimit);
+
     res.json({
       success: true,
       data: rules,
+      pagination: {
+        total,
+        page,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      }
     });
   } catch (err) {
     console.error("Get rules error:", err);

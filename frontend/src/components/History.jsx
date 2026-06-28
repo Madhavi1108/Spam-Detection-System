@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const History = () => {
     const [history, setHistory] = useState([]);
     const [selectedItems, setSelectedItems] = useState([]);
     const [sortOrder, setSortOrder] = useState('newest');
     const [isLoading, setIsLoading] = useState(true);
+    const navigate = useNavigate();
 
     const sortedHistory = [...history].sort((a, b) => {
         const dateA = new Date(a.createdAt || 0);
@@ -219,7 +221,7 @@ const History = () => {
                     <h3 style={{ margin: '0 0 8px 0', color: '#374151', fontSize: '20px' }}>No scan history yet</h3>
                     <p style={{ margin: '0 0 24px 0', color: '#6b7280', fontSize: '14px' }}>It looks like you haven't scanned any messages or emails.</p>
                     <button 
-                        onClick={() => window.location.href = '/'}
+                        onClick={() => navigate('/dashboard')}
                         style={{
                             background: '#3b82f6',
                             color: 'white',

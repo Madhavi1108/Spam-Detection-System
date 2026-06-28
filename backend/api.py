@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import csv
 import joblib
+import numpy as np
 import os
 import re
 from collections import Counter
@@ -8,9 +9,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from domain_checker import analyze_text
 from email_header_analyzer import analyze_headers
+from explanation_engine import ExplanationEngine
 from pathlib import Path
 from flask_cors import CORS
 import sys
+from filelock import FileLock
 import requests
 
 # Try to import NLTK for stopwords (optional)
@@ -35,36 +38,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 load_dotenv()
 
 app = Flask(__name__)
-ALLOWED_ORIGIN = os.getenv("NODE_GATEWAY_ORIGIN", "http://localhost:3000")
-CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGIN}})
 
-from functools import wraps
-from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity, verify_jwt_in_request
-app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "super-secret")
-jwt = JWTManager(app)
-
-def jwt_or_secret_required():
-    def decorator(fn):
-        @wraps(fn)
-        def wrapper(*args, **kwargs):
-            secret = request.headers.get("X-Internal-Secret")
-            expected_secret = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
-            if secret and secret == expected_secret:
-                return fn(*args, **kwargs)
-            verify_jwt_in_request()
-            return fn(*args, **kwargs)
-        return wrapper
-    return decorator
-
-def get_current_user_identity():
-    secret = request.headers.get("X-Internal-Secret")
-    expected_secret = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
-    if secret and secret == expected_secret:
-        return request.headers.get("X-User-Username")
-    try:
-        return get_jwt_identity()
-    except Exception:
-        return None
+xai_engine = ExplanationEngine()
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -168,10 +144,39 @@ def predict():
                 f.write(f"WARNING: No text provided at {__import__('datetime').datetime.now()}\n")
             return jsonify({"error": "No text provided"}), 400
 
+        # Translate incoming text to English if it is not in English
+        original_text = text
+        detected_language = "en"
+        translated = False
+        
+        if input_type != "url" and text.strip():
+            try:
+                from langdetect import detect
+                detected_language = detect(text)
+            except Exception:
+                detected_language = "en"
+                
+            if detected_language != "en":
+                try:
+                    from deep_translator import GoogleTranslator
+                    translated_text = GoogleTranslator(source='auto', target='en').translate(text)
+                    if translated_text and translated_text.strip().lower() != text.strip().lower():
+                        text = translated_text
+                        translated = True
+                except Exception:
+                    pass
+
         # Get spam prediction
         text_vector = vectorizer.transform([text])
         prediction = model.predict(text_vector)
         final_output = label_encoder.inverse_transform(prediction)[0]
+
+        # Confidence using decision function for LinearSVC
+        try:
+            scores = model.decision_function(text_vector)
+            confidence = round(float(np.max(scores)), 4)
+        except Exception:
+            confidence = None
         
         # Get domain analysis
         domain_analysis = analyze_text(text)
@@ -236,26 +241,26 @@ def predict():
         with open(LOG_FILE, "a") as f:
             from datetime import datetime
             f.write(f"{datetime.now()} - Prediction: '{text_preview}' -> {final_output}\n")
-        # feat
-            
-        # return jsonify({
-        #     "input": text, 
-        #     "prediction": final_output
-        # })
-    
-        # Return response with domain analysis
+        
+        # Generate XAI explanation for the input text
+        explanation = xai_engine.analyze(text, input_type=input_type)
 
-
-        # main
-        return jsonify({
-            "input": text,
+        # Return response with domain analysis and explanation
+        response_data = {
+            "input": original_text,
+            "result": final_output,
             "prediction": final_output,
-            "confidence": confidence,
-            "confidence_level": confidence_level,
-            "level_color": level_color,
-            "level_emoji": level_emoji,
-            "domain_analysis": domain_analysis
-        })
+            "domain_analysis": domain_analysis,
+            "explanation": explanation,
+            "detected_language": detected_language,
+            "translated": translated,
+        }
+        if translated:
+            response_data["translated_text"] = text
+        if confidence is not None:
+            response_data["confidence"] = confidence
+
+        return jsonify(response_data)
 
     except Exception as e:
         with open(LOG_FILE, "a") as f:
@@ -362,16 +367,24 @@ def feedback():
     if not text or correct_label not in FEEDBACK_LABELS:
         return jsonify({"error": "Invalid feedback data"}), 400
 
-    file_exists = os.path.isfile(FEEDBACK_FILE)
-    with open(FEEDBACK_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["text", "predicted_label", "correct_label", "submitted_at"])
-        from datetime import datetime, timezone
-        writer.writerow([text, predicted_label, correct_label, datetime.now(timezone.utc).isoformat()])
+    lock_path = str(FEEDBACK_FILE) + '.lock'
 
-    return jsonify({"message": "Feedback recorded. Thank you!"}), 201
+    try:
+        with FileLock(lock_path, timeout=5):
+            file_exists = os.path.isfile(FEEDBACK_FILE)
+            with open(FEEDBACK_FILE, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["text", "predicted_label", "correct_label", "submitted_at"])
+                from datetime import datetime, timezone
+                writer.writerow([text, predicted_label, correct_label, datetime.now(timezone.utc).isoformat()])
 
+        return jsonify({"message": "Feedback recorded. Thank you!"}), 201
+    except Timeout:
+        return jsonify({"error": "Could not acquire lock on feedback file, please try again later."}), 503
+    except Exception as e:
+        app.logger.error(f"Failed to write feedback: {e}")
+        return jsonify({"error": "Failed to record feedback."}), 500
 
 @app.route("/analyze-email-header", methods=["POST"])
 def analyze_email_header():

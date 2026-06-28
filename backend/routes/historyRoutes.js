@@ -12,9 +12,6 @@ const { protect } = require("../middleware/authMiddleware");
 // Get logged-in user's history
 router.get("/", protect, getHistory);
 
-// Delete one history item
-router.delete("/:id", protect, deleteHistoryItem);
-
 // Bulk delete history items
 router.delete("/bulk-delete", protect, async (req, res) => {
   try {
@@ -45,6 +42,9 @@ router.delete("/bulk-delete", protect, async (req, res) => {
     });
   }
 });
+
+// Delete one history item
+router.delete("/:id", protect, deleteHistoryItem);
 
 // Clear all history
 router.delete("/", protect, clearHistory);

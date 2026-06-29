@@ -1,4 +1,4 @@
-const { formatError, errorHandler, errorCodes } = require('./utils/errorHelper');
+const { formatError, errorHandler, errorCodes, classifyMlApiError } = require('./utils/errorHelper');
 require("dotenv").config();
 const dns = require("dns");
 const validateEnv = require('./utils/validateEnv');
@@ -27,6 +27,7 @@ const logStartupTime= (component, startTime) => {
 // Configure global request interceptor to append the internal secret API key
 axios.interceptors.request.use(
   (config) => {
+    config.timeout = 15000; // 15 seconds timeout
     const internalSecret = process.env.INTERNAL_SECRET || "super-secret-internal-key";
     config.headers["X-Internal-Secret"] = internalSecret;
     return config;
@@ -227,6 +228,7 @@ app.use("/api/rules", ruleRoutes);
 app.use("/api/reports", reportRoutes);
 
 const { protect } = require("./middleware/authMiddleware");
+const { predictLimiter } = require("./middleware/rateLimiter");
 
 // ===== PREDICTION COUNT =====
 app.get('/api/history/count',protect,async (req,res) => {
@@ -258,7 +260,7 @@ app.get("/health", async (req, res) => {
 });
 
 // Protected: only authenticated users can predict
-app.post("/predict", protect, async (req, res) => {
+app.post("/predict", predictLimiter, protect, async (req, res) => {
   try {
     console.log("Reached /predict");
     const { text, type, sender } = req.body;
@@ -361,7 +363,8 @@ app.post("/predict", protect, async (req, res) => {
         type: type.toLowerCase(),
       },
       {
-        headers: { "X-Forwarded-For": req.ip || req.connection.remoteAddress }
+        headers: { "X-Forwarded-For": req.ip || req.connection.remoteAddress },
+        timeout: Number(process.env.ML_API_TIMEOUT_MS) || 15000,
       }
     );
     console.log("Flask responded:", response.data);
@@ -395,7 +398,11 @@ Sentry.captureException(error, {
     });
 
     console.error(`[${req.requestId}]`, error.message);
-    res.status(500).json({ error: "Something went wrong" });
+
+    // Distinguish ML API failures (timeout / unavailable / upstream 4xx vs 5xx)
+    // so the frontend can show specific messaging and a retry affordance.
+    const { status, body } = classifyMlApiError(error);
+    res.status(status).json(body);
   }
 });
 
@@ -781,6 +788,51 @@ app.get("/gmail/connect", protect, async (req, res) => {
   }
 });
 
+// ==== SPAM WORD OF THE DAY ====
+const spamWords={};
+
+//Track spam word when saving history
+//In the /predict endpoint, after saving history:
+if(response.data.prediction === 'spam'){
+  const words = text.toLowerCase().match(/[a-z]+/g) || [];
+    words.forEach(word => {
+        if (word.length > 2) {
+            spamWords[word] = (spamWords[word] || 0) + 1;
+        }
+    });
+    // Save to file/database
+    saveSpamWords(spamWords);
+}
+
+//Get word of the day
+app.get('api/spam-word-of-the-day',async(req,res)=> {
+  try {
+        const words = await getSpamWords();
+        const sorted = Object.entries(words).sort((a,b) => b[1] - a[1]);
+        const topWord = sorted.length > 0 ? sorted[0][0] : 'prize';
+        
+        const definitions = {
+            'free': 'Scammers use "free" to lure victims with offers that seem too good to be true.',
+            'win': 'Claiming you won something you never entered is a common phishing tactic.',
+            'prize': 'Urgent claims about winning a prize are designed to make you act without thinking.',
+            'click': 'Malicious links are often hidden behind "click here" calls to action.',
+            'urgent': 'Creating false urgency pressures victims to act before thinking critically.',
+            'verify': 'Scammers ask you to "verify" sensitive information to steal your identity.',
+            'limited': 'False scarcity ("limited time") is used to pressure you into quick decisions.',
+            'congratulations': 'Scammers use congratulations to make you feel special before asking for personal info.'
+        };
+        res.json({
+          success:true,
+          word:topWord,
+          count: sorted.length > 0 ? sorted[0][1] : 0,
+          definition: definitions[topWord] || 'Commonly used in spam messages',
+          context: `"${topWord}" appears in the spam messages ${sorted.length > 0 ? sorted[0][1] : 0} times.`
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Protected: Get latest Gmail emails
 app.get("/gmail/emails", protect, async (req, res) => {
   try {
@@ -911,7 +963,17 @@ async function applyRulesToEmails(userId, emails) {
     return { emails: emails || [], spamCount: 0, safeCount: 0 };
   }
   
-  const rules = await Rule.find({ user: userId });
+  const rules = await Rule.find({ user: userId }).limit(1000).lean();
+  
+  const blacklist = new Set();
+  const whitelist = new Set();
+  
+  rules.forEach(r => {
+    if (!r.pattern) return;
+    const pattern = r.pattern.toLowerCase().trim();
+    if (r.type === 'blacklist') blacklist.add(pattern);
+    else if (r.type === 'whitelist') whitelist.add(pattern);
+  });
   
   let spamCount = 0;
   let safeCount = 0;
@@ -942,9 +1004,20 @@ async function applyRulesToEmails(userId, emails) {
       possiblePatterns.push(domain);
     }
     
-    const matchingRule = rules.find(r => possiblePatterns.includes(r.pattern.toLowerCase().trim()));
-    if (matchingRule) {
-      const isSpam = matchingRule.type === 'blacklist';
+    let matchedType = null;
+    for (const pattern of possiblePatterns) {
+      if (blacklist.has(pattern)) {
+        matchedType = 'blacklist';
+        break;
+      }
+      if (whitelist.has(pattern)) {
+        matchedType = 'whitelist';
+        break;
+      }
+    }
+    
+    if (matchedType) {
+      const isSpam = matchedType === 'blacklist';
       const updatedPrediction = isSpam ? 'spam' : 'ham';
       
       if (updatedPrediction === 'spam') {

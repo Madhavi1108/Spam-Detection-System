@@ -13,6 +13,7 @@
     "@react-oauth/google": "^0.13.5",
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.13.6",
+    "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.21.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

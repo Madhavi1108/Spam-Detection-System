@@ -15,6 +15,17 @@ const generateToken = (userId) => {
   });
 };
 
+const buildAuthResponse = (user, token) => ({
+  token,
+  user: {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+    provider: user.provider,
+  },
+});
+
 const register = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -35,8 +46,7 @@ const register = async (req, res) => {
 
     res.status(201).json({
       message: 'Account created successfully!',
-      token,
-      user: { id: user._id, username: user.username, email: user.email, avatarUrl: user.avatarUrl },
+      ...buildAuthResponse(user, token),
     });
   } catch (err) {
     console.error('Register error:', err);
@@ -71,8 +81,7 @@ const login = async (req, res) => {
 
     res.json({
       message: 'Login successful!',
-      token,
-      user: { id: user._id, username: user.username, email: user.email, avatarUrl: user.avatarUrl },
+      ...buildAuthResponse(user, token),
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -140,14 +149,7 @@ const googleLogin = async (req, res) => {
 
     res.json({
       message: 'Login successful!',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        avatarUrl: user.avatarUrl,
-        provider: user.provider,
-      },
+      ...buildAuthResponse(user, token),
     });
   } catch (err) {
     console.error('Google Auth Error:', err);
@@ -160,7 +162,7 @@ const updateAvatar = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    
+
     const filename = `${req.user.id}-${Date.now()}.webp`;
     const filepath = path.join(__dirname, '..', 'uploads', filename);
 
@@ -170,7 +172,7 @@ const updateAvatar = async (req, res) => {
       .toFile(filepath);
 
     const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
-    
+
     // Clean up old avatar if it exists
     const currentUser = await User.findById(req.user.id);
     if (currentUser && currentUser.avatarUrl && currentUser.avatarUrl.includes('/uploads/')) {
@@ -184,17 +186,17 @@ const updateAvatar = async (req, res) => {
         console.error('Failed to delete old avatar:', err);
       }
     }
-    
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { avatarUrl },
       { new: true }
     ).select('-password');
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     res.json({ message: 'Avatar updated successfully', user });
   } catch (err) {
     console.error('Avatar upload error:', err);

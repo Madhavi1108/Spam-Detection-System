@@ -27,13 +27,13 @@ const resetLimiter = rateLimit({
   }
 });
 
-// Throttle PDF export to prevent CPU exhaustion
-const exportLimiter = rateLimit({
+// Throttle the chat endpoint to prevent API exhaustion
+const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 3,
+  max: 15,
   message: {
     success: false,
-    error: "Too many PDF exports. Please wait a minute.",
+    error: "Too many chat requests. Please slow down.",
   }
 });
 
@@ -65,7 +65,7 @@ module.exports = {
   registerLimiter,
   resetLimiter,
   predictLimiter,
-  exportLimiter,
+  chatLimiter,
   PREDICT_MAX,
   PREDICT_WINDOW_MS,
 };

@@ -216,9 +216,11 @@ const forgotPassword = async (req, res) => {
     // Generate token using password hash to make it single-use
     const secret = process.env.JWT_SECRET + user.password;
     const token = jwt.sign({ id: user._id, email: user.email }, secret, { expiresIn: '15m' });
+    
+    // Generate reset link using configurable client URL
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
 
-    // Mock reset link
-    const resetLink = `http://localhost:3000/reset-password/${user._id}/${token}`;
+    const resetLink = `${clientUrl}/reset-password/${user._id}/${token}`;
 
     const transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.ethereal.email',

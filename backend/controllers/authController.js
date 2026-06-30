@@ -247,9 +247,11 @@ const forgotPassword = async (req, res) => {
       },
     });
 
+    const emailFrom = process.env.EMAIL_FROM || '"Spam Detection System" <noreply@spamdetection.local>';
+
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       await transporter.sendMail({
-        from: '"Spam Detection System" <noreply@spamdetection.local>',
+        from: emailFrom,
         to: user.email,
         subject: 'Password Reset Request',
         text: `Please use the following link to reset your password: ${resetLink} \n\nThis link expires in 15 minutes.`,

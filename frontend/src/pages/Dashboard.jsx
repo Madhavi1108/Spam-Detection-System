@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import { useTheme } from "../context/ThemeContext";
 import api from "../utils/axiosInstance";
-import Footer from "../components/Footer";
+
 
 const API_BASE = import.meta.env.VITE_PYTHON_URI || "http://127.0.0.1:5000";
 
@@ -298,7 +298,6 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-      <Footer />
     </div>
   );
 }

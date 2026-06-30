@@ -9,6 +9,7 @@ import History from "../components/History";
 import WordCloud from "../components/WordCloud";
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
+import confetti from 'canvas-confetti';
 import Register from "./Register.jsx";
 import EmailHeaderAnalyzer from "../components/EmailHeaderAnalyzer";
 import BulkSpamDetection from "../components/BulkSpamDetection";
@@ -17,31 +18,52 @@ import EmailScannerDashboard from "../components/EmailScannerDashboard";
 import Chatbot from "../components/Chatbot";
 import Footer from "../components/Footer";
 import InstallAppButton from "../components/InstallAppButton";
-import { useNavigate } from "react-router-dom";
 import RulesManager from "../components/RulesManager";
 
 function App() {
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [result, setResult] = useState("");
+  const [errorInfo, setErrorInfo] = useState(null);
   const [confidence, setConfidence] = useState(null);
-  const [explanation, setExplanation] = useState(null); 
+  const [explanation, setExplanation] = useState(null);
+  const [wordOfDay, setWordOfDay] = useState(null);
+  const [wordLoading, setWordLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
+  const [hasCelebrated, setHasCelebrated] = useState(() => {
+    return localStorage.getItem("firstPrediction") === "true";
+  });
+  const [showCelebration, setShowCelebration] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const detectType = (text) => {
-    if (!text || text.trim().length === 0) return 'message';
+    if (!text || text.trim().length === 0) return "message";
     const trimmed = text.trim();
-    if (trimmed.includes('http://') || trimmed.includes('https://')) return 'url';
-    if (trimmed.includes('@') && trimmed.includes('.')) {
+    if (trimmed.includes("http://") || trimmed.includes("https://")) return "url";
+    if (trimmed.includes("@") && trimmed.includes(".")) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (emailRegex.test(trimmed)) return 'email';
+      if (emailRegex.test(trimmed)) return "email";
     }
-    if (trimmed.length < 160 && !trimmed.includes('\n')) return 'sms';
-    return 'message';
+    if (trimmed.length < 160 && !trimmed.includes("\n")) return "sms";
+    return "message";
   };
 
+  const calculateReadingTime = (text) => {
+    if(!text || text.trim().length === 0) return '0 sec read';
+
+    const wordCount = text.trim().split(/\s+/).length
+    const readingTimeMinutes = wordCount / 200; // Average reading speed: 200 wpm
+
+    if(readingTimeMinutes < 1) {
+      const seconds = Math.round(readingTimeMinutes * 60);
+      return `${seconds} sec read`;
+    } else if(readingTimeMinutes<2){
+      return '1 min read';
+    }else {
+      return `${Math.round(readingTimeMinutes)} min read`;
+    }
+    };
 
   const [darkMode, setDarkMode] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -57,7 +79,54 @@ function App() {
     return "detector";
   });
 
-  const { user, logout } = useAuth();
+  // ==== SOUND EFFECTS ====
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const playSpamSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // Alert sound - two quick beeps
+      [0, 0.15].forEach((delay) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 600;
+        osc.type = "square";
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay + 0.15);
+        osc.start(ctx.currentTime + delay);
+        osc.stop(ctx.currentTime + delay + 0.15);
+      });
+    } catch (e) {
+      /* silent fail */
+    }
+  };
+
+  const playHamSound = () => {
+    if(!soundEnabled) return;
+    try{
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // Success sound - pleasant ascending tone
+        [523, 659, 784].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value=freq;
+            osc.type = 'sine';
+            gain.gain.setValueAtTime(0.2,ctx.currentTime + i * 0.12);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.12 + 0.15);
+            osc.start(ctx.currentTime + i * 0.12);
+            osc.stop(ctx.currentTime + i * 0.12 + 0.15);
+        });
+      }  catch (e)  { /* silent fail */ }
+  };
+      
+   
+
+  const { user, login, logout } = useAuth();
   const handleLogout = () => {
     logout();
     localStorage.removeItem("user");
@@ -74,27 +143,61 @@ function App() {
     THEME_PALETTES,
   } = useTheme();
 
-const handlePredict = async () => {
-  if (!text || text.trim().length === 0) return;
-  try {
-    setLoading(true);
-    const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
-      text: text,
-      type: type,
-    });
-    setResult(res.data.prediction);
-    setConfidence(res.data.confidence ?? null);
-    setExplanation(res.data.explanation ?? null);
-  } catch (err) {
-    console.error("Predict error:", err);
-    setResult("Error");
-    setExplanation(null); 
-    setConfidence(null);
-    setExplanation(null);
-  } finally {
-    setLoading(false);
-  }
-};
+  const handlePredict = async () => {
+    if (!text || text.trim().length === 0) return;
+    try {
+      setLoading(true);
+      const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
+        text: text,
+        type: type,
+      });
+    if (!hasCelebrated) {
+    triggerConfetti();
+    setHasCelebrated(true);
+    localStorage.setItem('firstPrediction', 'true');
+    }
+  const fetchWordOfTheDay = async () => {
+    try{
+      setWordLoading(true);
+      const res = await api.get(`${import.meta.env.VITE_API_URI}/api/v1/spam/word-of-the-day`);
+    setWordOfDay(res.data);
+    } catch (error) {
+    console.error('Failed to fetch word of the day:', error);
+    } finally {
+    setWordLoading(false);
+    }
+  };
+
+      setResult(res.data.prediction);
+      setConfidence(res.data.confidence ?? null);
+    } catch (error) {
+      setResult("Error");
+      setExplanation(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (result === 'spam' || result === 'malicious') {
+    playSpamSound();
+} else if (result === 'ham' || result === 'safe') {
+    playHamSound();
+}
+
+
+
+  const triggerConfetti = () => {
+    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    setTimeout(() => {
+        confetti({ particleCount: 50, spread: 50, origin: { y: 0.6, x: 0.3 } });
+    }, 200);
+    setTimeout(() => {
+        confetti({ particleCount: 50, spread: 50, origin: { y: 0.6, x: 0.7 } });
+    }, 400);
+    setTimeout(() => {
+        setShowCelebration(true);
+    }, 500);
+  };
 
   const confidencePct =
     confidence !== null
@@ -144,6 +247,19 @@ const handlePredict = async () => {
           Logout
         </button>
       </div>
+
+      <button
+        onClick={() => setSoundEnabled(!soundEnabled)}
+        className="px-4 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center gap-2 shadow-md"
+        style={{
+          background: isDark ? '#1e293b' : '#e2e8f0',
+          color: isDark ? '#e4e4e4' : '#1e293b',
+          border: 'none',
+          cursor: 'pointer'
+        }}
+      >
+        {soundEnabled ? '🔊' : '🔇'}
+      </button>
 
       <div className="absolute top-4 left-4 flex items-center gap-3">
         <label className="cursor-pointer relative group">
@@ -435,17 +551,17 @@ const handlePredict = async () => {
                     </button>
                   )}
 
-                  <div className="flex justify-end items-center mt-1.5 px-1 text-xs font-medium tracking-wide opacity-70">
-                    {text.length > 5000 ? (
-                      <span className="text-red-500 font-bold">
-                        {text.length.toLocaleString()} / 5000 characters (Limit exceeded)
-                      </span>
-                    ) : (
-                      <span className={text.length > 500 ? "text-orange-500" : ""}>
-                        {text.length.toLocaleString()} characters
-                      </span>
-                    )}
-                  </div>
+                <div className="flex justify-between items-center mt-1.5 px-1 text-xs font-medium tracking-wide opacity-70">
+                  <span>📖 {calculateReadingTime(text)}</span>
+                  {text.length > 5000 ? (
+                     <span className="text-red-500 font-bold">
+                      {text.length.toLocaleString()} / 5000 characters (Limit exceeded)
+                     </span>
+                  ) : (
+                     <span className={text.length > 500 ? "text-orange-500" : ""}>
+                      {text.length.toLocaleString()} characters
+                     </span>
+                  )}
                 </div>
 
                 <button
@@ -496,6 +612,54 @@ const handlePredict = async () => {
                     </div>
                   </div>
                 ) : result && (
+               {/* Results Section */}
+                {result && (
+                {/* Error Section */}
+                {result === "Error" && errorInfo && (
+                  <div
+                    className={`mt-5 rounded-3xl p-5 shadow-lg border ${
+                      isDark
+                        ? "bg-yellow-500/10 border-yellow-600/40"
+                        : "bg-yellow-50 border-yellow-300"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl leading-none">⚠️</span>
+                      <div className="flex-1">
+                        <h3
+                          className={`text-base font-bold ${
+                            isDark ? "text-yellow-300" : "text-yellow-800"
+                          }`}
+                        >
+                          {errorInfo.title}
+                        </h3>
+                        <p
+                          className={`mt-1 text-sm ${
+                            isDark ? "text-yellow-200/80" : "text-yellow-700"
+                          }`}
+                        >
+                          {errorInfo.message}
+                        </p>
+                        {errorInfo.retryable && (
+                          <button
+                            onClick={handlePredict}
+                            disabled={loading}
+                            className={`mt-3 px-4 py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed ${
+                              isDark
+                                ? "bg-yellow-500 text-slate-900 hover:bg-yellow-400"
+                                : "bg-yellow-500 text-white hover:bg-yellow-600"
+                            }`}
+                          >
+                            {loading ? "Retrying..." : "🔄 Retry"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Results Section */}
+                {result && result !== "Error" && (
                   <div
                     className={`mt-5 rounded-3xl p-5 shadow-lg border ${
                       isDark
@@ -507,26 +671,9 @@ const handlePredict = async () => {
                     <div className="flex justify-between items-center mb-5">
                       <div className="flex items-center gap-2">
                         <h2 className="text-lg font-bold">📊 Analysis Result</h2>
-                        <button
-                          onClick={() => {
-                            const scoreStr = confidence !== null ? ` | Confidence: ${confidencePct}%` : "";
-                            const copyText = `Prediction: ${result === 'ham' || result === 'safe' ? 'Safe' : result === 'spam' || result === 'malicious' ? 'Spam/Malicious' : result === 'smishing' ? 'Fraud' : result}${scoreStr}`;
-                            navigator.clipboard.writeText(copyText);
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 2000);
-                          }}
-                          className={`ml-1 w-7 h-7 flex items-center justify-center rounded-full transition-all text-[11px] ${
-                            isDark ? "hover:bg-slate-700 bg-slate-800 text-slate-300" : "hover:bg-slate-200 bg-slate-100 text-slate-600"
-                          }`}
-                          title="Copy Result to Clipboard"
-                        >
-                          {copied ? "✅" : "📋"}
-                        </button>
                       </div>
-
-                      {/* Badge */}
                       <span
-                        className={`px-4 py-2 rounded-full text-sm font-bold ${
+                        className={`px-4 py-2 rounded-full text-sm font-bold shadow-sm ${
                           result === "ham" || result === "safe"
                             ? "bg-green-500 text-white"
                             : result === "spam" || result === "malicious"
@@ -545,82 +692,20 @@ const handlePredict = async () => {
                       </span>
                     </div>
 
-                    {/* Confidence */}
-                    {confidence !== null && result !== "Error" && (
-                      <>
-                        <p className="text-sm opacity-70 mb-1">Confidence Score</p>
-                        <h3 className="text-3xl font-bold mb-4">{confidencePct}%</h3>
-                        <div className={`w-full rounded-full h-3 mb-5 ${isDark ? "bg-slate-700" : "bg-slate-200"}`} />
-                      </>
-                    )}
+                    <p className="text-sm opacity-80 leading-relaxed text-left font-medium">
+                      {(result === "spam" || result === "smishing" || result === "malicious") &&
+                        "This content contains characteristics commonly found in spam, phishing, or malicious attacks."}
+                      {(result === "ham" || result === "safe") &&
+                        "No suspicious patterns were detected in this content."}
+                    </p>
 
-                    {result && confidence !== null && result !== "Error" && (
-                      <div className="mt-4 text-left">
-                        <p className="text-xs font-semibold mb-1 opacity-70">
-                          Model Confidence: {confidencePct}%
-                        </p>
-                        <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-800" : "bg-slate-200"}`}>
-                          <div
-                            className={`h-3 rounded-full transition-all duration-500 ${
-                              result === "ham" || result === "safe"
-                                ? "bg-green-500"
-                                : result === "spam" || result === "malicious"
-                                  ? "bg-red-500"
-                                  : "bg-orange-500"
-                            }`}
-                            style={{ width: `${confidencePct}%` }}
-                          />
-                        </div>
-
-                        <div className="mb-5">
-                          <p className="text-sm opacity-70 mb-2">Risk Level</p>
-                          <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                            riskLevel === "Low"
-                              ? "bg-green-100 text-green-700"
-                              : riskLevel === "Medium"
-                                ? "bg-yellow-100 text-yellow-700"
-                                : "bg-red-100 text-red-700"
-                          }`}>
-                            {riskLevel === "Low" && "🟢 Low"}
-                            {riskLevel === "Medium" && "🟠 Medium"}
-                            {riskLevel === "High" && "🔴 High"}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 mb-4">
-                          <button
-                            onClick={() => {
-                              const fullReport = `
-        📊 Spam Detection Report
-        ─────────────────────
-        🔍 Prediction: ${result === 'ham' || result === 'safe' ? '✅ Safe' : result === 'spam' || result === 'malicious' ? '🚫 Spam/Malicious' : result === 'smishing' ? '⚠️ Fraud' : '⚠️ Error'}
-        📝 Message: ${text}
-        📈 Confidence: ${confidence ? confidencePct + '%' : 'N/A'}
-        ⚠️ Risk Level: ${riskLevel}
-        📅 Date: ${new Date().toLocaleString()}
-         ─────────────────────
-        Powered by Spam Detection System`;
-                              navigator.clipboard.writeText(fullReport);
-                              setCopied(true);
-                              setTimeout(() => setCopied(false), 2000);
-                            }}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 w-full justify-center ${
-                              isDark
-                                ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
-                                : "bg-slate-200 hover:bg-slate-300 text-slate-700"
-                            }`}
-                          >
-                            {copied ? '✅ Copied!' : '📋 Copy Full Report'}
-                          </button>
-                        </div>
-
-                        <p className="text-sm opacity-75 leading-relaxed">
-                          {(result === "spam" || result === "smishing" || result === "malicious") &&
-                            "This content contains characteristics commonly found in spam, phishing, or malicious attacks."}
-                          {(result === "ham" || result === "safe") &&
-                            "No suspicious patterns were detected in this content."}
-                        </p>
-                      </div>
+                    {/* Modular XAI Component Rendering */}
+                    {explanation && result !== "Error" && (
+                      <PredictionExplanation 
+                        explanation={explanation} 
+                        result={result} 
+                        confidencePct={confidencePct} 
+                      />
                     )}
                     <div className="mt-4 text-left">
                      <p className="text-xs font-semibold mb-1 opacity-70">
@@ -702,6 +787,7 @@ Powered by Spam Detection System`;
                   setResult("");
                   setConfidence(null);
                   setExplanation(null);
+                  setErrorInfo(null);
                   setType("message");
                 }}
                 className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
@@ -739,6 +825,8 @@ Powered by Spam Detection System`;
                     setText("");
                     setResult("");
                     setConfidence(null);
+                    setExplanation(null);
+                    setErrorInfo(null);
                     setType("message");
                   }}
                   className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
@@ -748,30 +836,133 @@ Powered by Spam Detection System`;
                   Reset
                 </button>
 
-                <FeatureImportance darkMode={isDark} />
-              </>
-            ) : activeTab === "bulk" ? (
-              <BulkSpamDetection />
-            ) : activeTab === "insights" ? (
-              <SpamInsightsDashboard />
-            ) : activeTab === "scanner" ? (
-              <EmailScannerDashboard />
-            ) : activeTab === "rules" ? (
-              <RulesManager />
-            ) : activeTab === "history" ? (
-              <History />
-            ) : (
-              <EmailHeaderAnalyzer />
-            )}
-            <WordCloud darkMode={isDark} />
-          </div>
-        </div>
-      </div>
-      <Footer />
-      <Chatbot />
+                <button
+  onClick={() => {
+    setText("");
+    setResult("");
+    setConfidence(null);
+    setType("message");
+  }}
+  className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
+    isDark ? activeTheme.btnSecondaryDark : activeTheme.btnSecondary
+  }`}
+>
+  Reset
+</button>
+
+<FeatureImportance darkMode={isDark} />
+
+{/* SPAM WORD OF THE DAY */}
+{wordOfDay && (
+  <div className={`mt-6 p-4 rounded-xl border ${isDark ? 'bg-slate-800/30 border-slate-700' : 'bg-white/40 border-slate-200'}`}>
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="text-sm font-semibold opacity-70">📚 Spam Word of the Day</h3>
+      <button 
+        onClick={fetchWordOfTheDay}
+        className="text-xs opacity-50 hover:opacity-100 transition-opacity"
+        title="Refresh word of the day"
+      >
+        🔄
+      </button>
     </div>
-  )};
+    {wordLoading ? (
+      <div className="h-8 w-48 bg-slate-300 rounded animate-pulse"></div>
+    ) : (
+      <>
+        <div className="flex items-center gap-3">
+          <span className={`text-2xl font-bold ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
+            {wordOfDay.word || 'No spam detected today'}
+          </span>
+          {wordOfDay.count && (
+            <span className="text-sm opacity-60">
+              {wordOfDay.count} {wordOfDay.count === 1 ? 'detection' : 'detections'}
+            </span>
+          )}
+        </div>
+        {wordOfDay.definition && (
+          <p className="text-sm mt-2 opacity-75 leading-relaxed">
+            {wordOfDay.definition}
+          </p>
+        )}
+        {wordOfDay.context && (
+          <div className={`mt-2 p-2 rounded text-xs ${isDark ? 'bg-slate-900/50' : 'bg-slate-100/50'}`}>
+            <span className="opacity-60">Example: </span>
+            <span className="italic">"{wordOfDay.context}"</span>
+          </div>
+        )}
+        {wordOfDay.tips && (
+          <div className={`mt-2 p-2 rounded text-xs ${isDark ? 'bg-blue-900/20' : 'bg-blue-50'}`}>
+            💡 {wordOfDay.tips}
+          </div>
+        )}
+      </>
+    )}
+  </div>
+)}
 
 
+</> 
+) : activeTab === "bulk" ? (
+  <BulkSpamDetection />
+) : activeTab === "insights" ? (
+  <SpamInsightsDashboard />
+) : activeTab === "scanner" ? (
+ <EmailScannerDashboard />
+) : activeTab === "rules" ? (
+  <RulesManager />
+) : activeTab === "history" ? (
+  <History />
+) : (
+  <EmailHeaderAnalyzer />
+)}
 
+<WordCloud darkMode={isDark} />
+{showCelebration && (
+  <div className="celebration-modal" style={{
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000
+  }}>
+    <div style={{
+      background: 'white',
+      padding: '40px',
+      borderRadius: '20px',
+      textAlign: 'center',
+      maxWidth: '400px',
+      width: '90%'
+    }}>
+      <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎉</div>
+      <h2 style={{ color: '#7c3aed' }}>First Prediction Complete!</h2>
+      <p style={{ color: '#6b7280', marginBottom: '1.5rem' }}>
+        You're on your way to becoming a spam detection expert!
+      </p>
+      <button 
+        onClick={() => setShowCelebration(false)} 
+        style={{
+          padding: '10px 30px',
+          background: '#7c3aed',
+          color: 'white',
+          border: 'none',
+          borderRadius: '8px',
+          cursor: 'pointer'
+        }}
+      >
+        Continue Learning →
+      </button>
+    </div>
+  </div>
+)}
+</div>  
+</div> 
+</div>  
+<Footer darkMode={isDark} />
+<Chatbot />
+</div>  
+);
+}
+  
 export default App;

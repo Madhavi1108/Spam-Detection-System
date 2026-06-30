@@ -3,7 +3,7 @@ const Rule = require("../models/Rule");
 // Get all rules for the logged-in user
 const getRules = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = parseInt(req.query.limit) || 100;
     const safeLimit = Math.min(limit, 100);
     const skip = (page - 1) * safeLimit;
@@ -55,6 +55,12 @@ const addRule = async (req, res) => {
     
     if (!isValidEmail && !isValidDomain) {
       return res.status(400).json({ error: "Pattern must be a valid email address (e.g. user@domain.com) or domain (e.g. @domain.com or domain.com)" });
+    }
+
+    // Enforce a hard limit on maximum rules per user to prevent storage exhaustion
+    const ruleCount = await Rule.countDocuments({ user: req.user.id });
+    if (ruleCount >= 500) {
+      return res.status(400).json({ error: "Maximum rule limit reached (500). Please delete some old rules before adding new ones." });
     }
 
     // Check if the rule already exists

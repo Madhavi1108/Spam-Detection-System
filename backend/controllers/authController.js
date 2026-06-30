@@ -231,7 +231,7 @@ const forgotPassword = async (req, res) => {
 
     // Generate token using password hash to make it single-use
     const secret = process.env.JWT_SECRET + user.password;
-    const token = jwt.sign({ id: user._id, email: user.email }, secret, { expiresIn: '15m' });
+    const token = jwt.sign({ id: user._id, email: user.email }, secret, { expiresIn: process.env.PASSWORD_RESET_TOKEN_EXPIRES || '15m' });
 
     // Generate reset link using configurable client URL
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';

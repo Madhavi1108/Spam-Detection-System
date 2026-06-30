@@ -181,6 +181,15 @@ const Login = () => {
           >
             {loading ? "Logging in..." : "Login"}
           </button>
+
+          <p className="text-center text-sm">
+            <Link
+              to="/forgot-password"
+              className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+            >
+              Forgot password?
+            </Link>
+          </p>
         </form>
 
         <div className="flex flex-col items-center mt-6">

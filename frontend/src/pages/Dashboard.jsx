@@ -16,7 +16,6 @@ import {
 import { useTheme } from "../context/ThemeContext";
 import api from "../utils/axiosInstance";
 
-
 const API_BASE = import.meta.env.VITE_PYTHON_URI || "http://127.0.0.1:5000";
 
 // Known verdict labels the ML API can return (text -> ham/spam/smishing, url -> safe/malicious).

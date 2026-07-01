@@ -806,6 +806,25 @@ are not covered by automated tests in this PR.
 - [Docker](https://docs.docker.com/get-docker/) installed
 - [Docker Compose](https://docs.docker.com/compose/install/) installed
 
+### 🔧 Environment Configuration
+
+Before running `docker-compose up`, create a `.env` file in the project root with the following required variables:
+
+| Variable | Description | Required | Example |
+|----------|-------------|----------|---------|
+| `JWT_SECRET` | Secret key for JWT token generation | ✅ Yes | `your-super-secret-jwt-key-12345` |
+| `MONGODB_URI` | MongoDB connection string | ✅ Yes | `mongodb://localhost:27017/spam-detection` |
+| `GOOGLE_CLIENT_ID` | Google OAuth 2.0 Client ID | ✅ Yes | `123456789-abcdefg.apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 Client Secret | ✅ Yes | `GOCSPX-abcdefghijklmnop` |
+| `API_URL` | ML Prediction API URL | ✅ Yes | `http://localhost:5000/predict` |
+| `FRONTEND_URL` | Frontend URL | ✅ Yes | `http://localhost:5173` |
+| `VITE_API_URI` | Backend API URL (Frontend) | ✅ Yes | `http://localhost:3000/api` |
+
+
+# Frontend
+VITE_API_URI=http://localhost:3000/api
+VITE_ML_API_URI=http://localhost:5000/predict
+
 ### Docker Hub Images
 
 Pre-built images are available — no build step required:

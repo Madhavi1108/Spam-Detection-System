@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
   getHistory,
+  searchHistory,
   deleteHistoryItem,
   clearHistory,
 } = require("../controllers/historyController");
@@ -11,6 +12,9 @@ const { protect } = require("../middleware/authMiddleware");
 
 // Get logged-in user's history
 router.get("/", protect, getHistory);
+
+// Search user's history
+router.get("/search", protect, searchHistory);
 
 // Bulk delete history items
 router.delete("/bulk-delete", protect, async (req, res) => {

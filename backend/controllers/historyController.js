@@ -101,8 +101,66 @@ const clearHistory = async (req, res) => {
   }
 };
 
+const searchHistory = async (req, res) => {
+  try {
+    const safeUserId = sanitizeInput(req.user.id);
+    const { q, type, startDate, endDate } = req.query;
+    
+    let query = { user: safeUserId };
+    
+    if (q) {
+      query.query = { $regex: q, $options: 'i' };
+    }
+    
+    if (type && type !== 'all') {
+      query.type = type;
+    }
+    
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) {
+        // Set to end of the day to ensure we include all items on that date
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+    
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = parseInt(req.query.limit) || 50; // History page might fetch many
+    const safeLimit = Math.min(limit, 100);
+    const skip = (page - 1) * safeLimit;
+
+    const total = await History.countDocuments(query);
+    const history = await History.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(safeLimit);
+
+    const totalPages = Math.ceil(total / safeLimit);
+
+    res.json({
+      success: true,
+      data: history,
+      pagination: {
+        total,
+        page,
+        limit: safeLimit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (err) {
+    console.error("Search history error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
 module.exports = {
   getHistory,
+  searchHistory,
   deleteHistoryItem,
   clearHistory,
 };

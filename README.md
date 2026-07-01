@@ -112,6 +112,19 @@ cd backend
 python api.py
 ```
 
+The Flask ML API binds to `127.0.0.1` (localhost only) with the debugger
+disabled by default. These are controlled via environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FLASK_PORT` | `5000` | Port the API listens on. |
+| `FLASK_HOST` | `127.0.0.1` | Interface to bind. Use `0.0.0.0` to expose on all interfaces **only behind a trusted proxy**. |
+| `FLASK_DEBUG` | `false` | Enables the Werkzeug debugger. Keep off outside local development — it allows remote code execution. |
+
+> ⚠️ Never run with `FLASK_DEBUG=true` while bound to a non-loopback host. The
+> app refuses to start for that combination to prevent exposing the interactive
+> debugger over the network.
+
 ### 📦 Install Dependencies
 
 ```bash

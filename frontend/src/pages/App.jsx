@@ -226,18 +226,47 @@ function App() {
   return patterns;
 };
 
+//Emoji Sentiment Analysis
+const analyzeEmojiSentiment = (text) => {
+  if (!text) return { positive: 0, negative: 0, neutral: 0 };
 
-  const fetchWordOfTheDay = async () => {
-    try {
-      setWordLoading(true);
-      const res = await api.get(`${import.meta.env.VITE_API_URI}/api/v1/spam/word-of-the-day`);
-      setWordOfDay(res.data);
-    } catch (error) {
-      console.error('Failed to fetch word of the day:', error);
-    } finally {
-      setWordLoading(false);
-    }
+  const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
+  const matches = text.match(emojiRegex) || [];
+
+  if(matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
+  }
+  
+  // Sentiment mapping
+    const sentimentMap = {
+    '😊': 'positive', '😃': 'positive', '😄': 'positive', '❤️': 'positive', '🎉': 'positive',
+    '👍': 'positive', '✨': 'positive', '🔥': 'positive', '🌟': 'positive', '💯': 'positive',
+    '😢': 'negative', '😭': 'negative', '😠': 'negative', '😡': 'negative', '💀': 'negative',
+    '😐': 'neutral', '🤔': 'neutral', '🧐': 'neutral', '😑': 'neutral'
   };
+  
+  const sentiments = matches.map(e => sentimentMap[e] || 'neutral');
+  const positive = sentiments.filter(s => s === 'positive').length;
+  const negative = sentiments.filter(s => s === 'negative').length;
+  
+  let overall = 'neutral';
+  if (positive > negative) overall = 'positive';
+  else if (negative > positive) overall = 'negative';
+  
+  // Check for spam emojis
+  const spamEmojis = ['💸', '💰', '🎁', '🏆', '💎', '🚨', '⚠️', '🎰', '🤑'];
+  const spamMatches = matches.filter(e => spamEmojis.includes(e));
+  
+  return {
+    count: matches.length,
+    emojis: matches,
+    sentiment: overall,
+    positive: positive,
+    negative: negative,
+    neutral: sentiments.filter(s => s === 'neutral').length,
+    spamDetected: spamMatches.length > 0,
+    spamEmojis: spamMatches
+  };
+};
 
   useEffect(() => {
     fetchWordOfTheDay();
@@ -678,9 +707,39 @@ function App() {
                          <span>{pattern.label}</span>
                       </span>
                     ))}
-                  </div>
-                 </div>
-                )}
+
+                    {/* Emoji Sentiment Analysis */}
+                    {result && result !== "Error" && text && analyzeEmojis(text).count > 0 && (
+                     <div className="mt-4 pt-3 border-t border-slate-700/20">
+                      <p className="text-xs font-semibold opacity-70 mb-2 flex items-center gap-1">
+                         <span>😊</span> Emoji Sentiment
+                      </p>
+                     <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-lg">
+                        {analyzeEmojis(text).emojis.join(' ')}
+                         </span>
+                         <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                         analyzeEmojis(text).sentiment === 'positive' 
+                         ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                         : analyzeEmojis(text).sentiment === 'negative'
+                         ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                         : 'bg-gray-100 text-gray-700 dark:bg-gray-800/30 dark:text-gray-400'
+                        }`}>
+                        {analyzeEmojis(text).sentiment === 'positive' && '😊 Positive'}
+                        {analyzeEmojis(text).sentiment === 'negative' && '😢 Negative'}
+                        {analyzeEmojis(text).sentiment === 'neutral' && '😐 Neutral'}
+                        </span>
+                        {analyzeEmojis(text).spamDetected && (
+                         <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500 text-white">
+                          ⚠️ Spam Emojis
+                         </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
                         <div className="mb-5">
                           <p className="text-sm opacity-70 mb-2">Risk Level</p>

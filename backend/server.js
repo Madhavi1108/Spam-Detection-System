@@ -276,36 +276,52 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// ---> NEW: Asynchronous Webhook Dispatcher (For Issue #430)
+// ---> NEW: Asynchronous Webhook Dispatcher (For Issue #430 & SSRF fix)
+const net = require('net');
+
+const isSafeWebhookUrl = (webhookUrl) => {
+  try {
+    const parsed = new URL(webhookUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost') return false;
+
+    if (net.isIP(host)) {
+      if (host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.')) return false;
+      const parts = host.split('.');
+      if (parts.length === 4) {
+        const first = parseInt(parts[0], 10);
+        const second = parseInt(parts[1], 10);
+        if (first === 172 && second >= 16 && second <= 31) return false;
+        if (first === 0) return false;
+      }
+      if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc00:') || host.startsWith('fd00:')) return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
 const dispatchWebhook = async (userId, payload) => {
   try {
     const user = await User.findById(userId);
     if (user && user.webhookUrl) {
-      let parsedUrl;
-      try {
-        parsedUrl = new URL(user.webhookUrl);
-      } catch (err) {
-        console.error(`[Webhook Failed] Invalid URL ${user.webhookUrl}:`, err.message);
-        return;
-      }
-
-      // Basic SSRF protection: block localhost, local/private IP ranges
-      const hostname = parsedUrl.hostname;
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
-      const isPrivateIP = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.)/.test(hostname);
-      
-      if (isLocalhost || isPrivateIP) {
-        console.error(`[Webhook Blocked] SSRF Prevention: Cannot dispatch to private/local address ${hostname}`);
-        return;
+      if (!isSafeWebhookUrl(user.webhookUrl)) {
+         console.warn(`[Webhook Blocked] SSRF protection prevented request to: ${user.webhookUrl}`);
+         return;
       }
 
       console.log(`[Webhook] Dispatching threat alert to: ${user.webhookUrl}`);
-
+      
+      // Fire and forget (Asynchronous execution via Axios) with 10s timeout
       axios.post(user.webhookUrl, {
-        event: "threat_detected",
-        payload: payload,
-        timestamp: new Date().toISOString()
-      }).catch(err => {
+        event: 'high_risk_threat_detected',
+        timestamp: new Date().toISOString(),
+        threat_details: payload
+      }, { timeout: 10000 }).catch(err => {
+        // Resilience: Catch external server errors so our app doesn't crash
         console.error(`[Webhook Failed] Could not deliver to ${user.webhookUrl}:`, err.message);
       });
     }

@@ -20,6 +20,7 @@ import SpamInsightsDashboard from "../components/SpamInsightsDashboard";
 import EmailScannerDashboard from "../components/EmailScannerDashboard";
 import Chatbot from "../components/Chatbot";
 import Footer from "../components/Footer";
+import SpamPatternLibrary from '../components/SpamPatternLibrary';
 import URLPreview from '../components/URLPreview';
 import InstallAppButton from "../components/InstallAppButton";
 import RulesManager from "../components/RulesManager";
@@ -36,6 +37,7 @@ function App() {
   const [wordOfDay, setWordOfDay] = useState(null);
   const [wordLoading, setWordLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const[SpamPatternLibrary, setSpamPatternLibrary] = useState(false);
   const [hasCelebrated, setHasCelebrated] = useState(() => {
     return localStorage.getItem("firstPrediction") === "true";
   });
@@ -545,6 +547,12 @@ const analyzeEmojiSentiment = (text) => {
                 onClick={() => setActiveTab("rules")}
                 className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "rules" ? "border-current opacity-100" : "border-transparent opacity-50 hover:opacity-75"}`}
               >
+              <button
+                 onClick={() => setShowPatternLibrary(true)}
+                 className="px-4 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center gap-2 shadow-md"
+              >
+              Patterns
+              </button>
                 Rules Manager
               </button>
               <button
@@ -933,6 +941,5 @@ const analyzeEmojiSentiment = (text) => {
       <Chatbot />
     </div>
   );
-}
 
 export default App;

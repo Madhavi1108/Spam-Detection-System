@@ -14,6 +14,9 @@ const compression = require('compression');
 const { v4: uuidv4 } = require('uuid');
 const helmet = require('helmet');
 const axios = require("axios");
+// Initialize background jobs
+require('./jobs/archivalCron');
+const { preventCacheStampede } = require('./middleware/cacheMiddleware');
 
 // ===== STARTUP TIMER =====
 const SERVER_START_TIME = Date.now();
@@ -275,19 +278,51 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// ---> NEW: Asynchronous Webhook Dispatcher (For Issue #430)
+// ---> NEW: Asynchronous Webhook Dispatcher (For Issue #430 & SSRF fix)
+const net = require('net');
+
+const isSafeWebhookUrl = (webhookUrl) => {
+  try {
+    const parsed = new URL(webhookUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost') return false;
+
+    if (net.isIP(host)) {
+      if (host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.')) return false;
+      const parts = host.split('.');
+      if (parts.length === 4) {
+        const first = parseInt(parts[0], 10);
+        const second = parseInt(parts[1], 10);
+        if (first === 172 && second >= 16 && second <= 31) return false;
+        if (first === 0) return false;
+      }
+      if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc00:') || host.startsWith('fd00:')) return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
 const dispatchWebhook = async (userId, payload) => {
   try {
     const user = await User.findById(userId);
     if (user && user.webhookUrl) {
+      if (!isSafeWebhookUrl(user.webhookUrl)) {
+         console.warn(`[Webhook Blocked] SSRF protection prevented request to: ${user.webhookUrl}`);
+         return;
+      }
+
       console.log(`[Webhook] Dispatching threat alert to: ${user.webhookUrl}`);
       
-      // Fire and forget (Asynchronous execution via Axios)
+      // Fire and forget (Asynchronous execution via Axios) with 10s timeout
       axios.post(user.webhookUrl, {
         event: 'high_risk_threat_detected',
         timestamp: new Date().toISOString(),
         threat_details: payload
-      }).catch(err => {
+      }, { timeout: 10000 }).catch(err => {
         // Resilience: Catch external server errors so our app doesn't crash
         console.error(`[Webhook Failed] Could not deliver to ${user.webhookUrl}:`, err.message);
       });
@@ -298,6 +333,8 @@ const dispatchWebhook = async (userId, payload) => {
 };
 
 // Protected: only authenticated users can predict
+
+app.post('/predict', preventCacheStampede, protect, async (req, res) => {
 // ---> NEW: Added `checkCache` middleware here! <---
 // ---> NEW: Added `checkCache` middleware here! <---
 app.post("/predict", predictLimiter, protect, async (req, res) => {
@@ -470,8 +507,11 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
         confidence_threshold: confidence_threshold
       },
       {
-        headers: { "X-Forwarded-For": req.ip || req.connection.remoteAddress },
-        timeout: Number(process.env.ML_API_TIMEOUT_MS) || 15000,
+        headers: { 
+          "X-Forwarded-For": req.ip || req.connection.remoteAddress,
+          "X-Request-ID": req.requestId // Forwarding the correlation ID
+        },
+        timeout: Number(process.env.ML_API_TIMEOUT_MS) || 15000
       }
     );
     console.timeEnd("ML_API_CALL");
@@ -922,6 +962,32 @@ app.get("/gmail/emails", protect, async (req, res) => {
         "X-User-Username": req.user.username,
       },
     });
+
+    // Check if the user has a valid refresh token for Gmail
+    if (!userTokens.refresh_token) {
+    return res.status(401).json({
+      error: "Re-authentication required. Please reconnect your Gmail account."
+      });
+    }
+    
+    const response = await axios.get(`${ML_API_BASE}/gmail/emails`, {
+      headers: {
+        "X-User-Username": req.user.username,
+      },
+    });
+    
+    //Check if the user has a valid refresh token for Outlook
+    if (!userTokens.refresh_token) {
+      return res.status(401).json({
+        error: "Re-authentication required. Please reconnect your Outlook account."
+      });
+    }
+    
+    const response = await axios.get(`${ML_API_BASE}/outlook/emails`, {
+      headers: {
+        "X-User-Username": req.user.username,
+      },
+    });
     res.json(response.data);
   } catch (error) {
     if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
@@ -1141,6 +1207,16 @@ app.post("/scan-emails", protect, async (req, res) => {
         .status(400)
         .json({ error: "Invalid provider. Must be 'gmail' or 'outlook'." });
     }
+    
+    //Check if the user has a valid refresh token for the specified provider
+    const userTokens = await getUserTokens(req.user.id, provider);
+    if (!userTokens?.refresh_token) {
+      return res.status(401).json({
+        success: false,
+        error: "Re-authentication required",
+        message: `Please reconnect your ${provider} account.`
+      });
+    }
     const response = await axios.post(
       `${ML_API_BASE}/scan-emails`,
       { provider },
@@ -1271,24 +1347,70 @@ app.get('/api/stats', protect, async (req, res) => {
     }
 });
 
+
+
 // ========================================
-// GRACEFUL SHUTDOWN
+// GRACEFUL SHUTDOWN LOGIC
 // ========================================
 
+// 1. Keep track of active connections
+const connections = new Set();
+server.on('connection', (connection) => {
+  connections.add(connection);
+  connection.on('close', () => connections.delete(connection));
+});
+
+// 2. The Graceful Shutdown Function
 const gracefulShutdown = async (signal) => {
-  console.log(`\nReceived ${signal}. Closing server...`);
-  server.close(async () => {
-    console.log('HTTP server closed.');
-    try {
-      await mongoose.disconnect();
-      console.log('MongoDB connection closed.');
-    } catch (err) {
-      console.error('Error closing MongoDB connection:', err);
+  console.log(`\n🛑 [${signal}] signal received: closing HTTP server...`);
+  
+  let forceClosed = false;
+
+  // 15-Second Fallback Timeout
+  const timeoutId = setTimeout(async () => {
+    forceClosed = true;
+    console.error('⚠️ [Timeout] Could not close connections in time, forcefully shutting down!');
+    
+    // Destroy all active connections forcefully
+    for (const connection of connections) {
+      connection.destroy();
     }
-    console.log('Shutdown complete. Exiting process.');
-    process.exit(0);
+    
+    if (mongoose.connection.readyState === 1) {
+      await mongoose.disconnect();
+    }
+    process.exit(1);
+  }, 15000); // 15 seconds grace period
+
+  // Close server to reject NEW requests
+  server.close(async () => {
+    if (forceClosed) return; 
+    
+    clearTimeout(timeoutId);
+    console.log('✅ HTTP server closed. All active requests completed normally.');
+    
+    try {
+      if (mongoose.connection.readyState === 1) {
+        await mongoose.disconnect();
+        console.log('✅ MongoDB disconnected successfully.');
+      }
+      process.exit(0);
+    } catch (err) {
+      console.error('❌ Error during MongoDB disconnection:', err);
+      process.exit(1);
+    }
   });
+
+  // Safely close idle connections immediately to speed up shutdown
+  if (server.closeIdleConnections) {
+    server.closeIdleConnections();
+  }
 };
+
+// 3. Assign the listeners
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+module.exports = { app, applyRulesToEmails };
 
 process.on('SIGINT', () => process.exit(0));
 // Protected: get the current IMAP connection status for the logged-in user
@@ -1464,6 +1586,17 @@ app.get('/api/history/search',protect, async(req,res) => {
         });
     }
 });
+// ========================================
+// START SERVER
+// ========================================
+
+// const PORT = config.port;
+// const server = app.listen(PORT, () => {
+//   const totalTime = Date.now() - SERVER_START_TIME;
+//   displayBanner();
+//   console.log(`⏱️ Total startup time: ${totalTime}ms`);
+// });
+
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 

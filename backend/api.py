@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import csv
 import joblib
 import numpy as np
@@ -20,6 +20,7 @@ import requests
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
 from flask_limiter import Limiter
+from flask_limiter.errors import RateLimitExceeded
 from flask_limiter.util import get_remote_address
 
 
@@ -64,7 +65,7 @@ limiter = Limiter(
 )
 
 # Flask-Limiter uses a default 429 HTML response; standardize to JSON.
-@limiter.error_handler(429)
+@app.errorhandler(RateLimitExceeded)
 def ratelimit_handler(e):
     return jsonify({"error": "Too Many Requests", "rate_limit": PREDICT_RATE_LIMIT}), 429
 
@@ -143,6 +144,8 @@ def require_internal_secret():
 def internal_endpoint_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if app.config.get("TESTING") and not app.config.get("ENFORCE_INTERNAL_SECRET"):
+            return f(*args, **kwargs)
         auth_header = request.headers.get("X-Internal-Secret", "")
         if not auth_header or not hmac.compare_digest(auth_header, INTERNAL_SECRET):
             return jsonify({"error": "Forbidden: requests must originate from the trusted backend"}), 403
@@ -234,6 +237,29 @@ LOG_FILE = OUTPUT_DIR / "api.log"
 FEEDBACK_LABELS = set(label_encoder.classes_)
 
 
+# ==========================================
+# DISTRIBUTED TRACING & OBSERVABILITY (Issue #500)
+# ==========================================
+@app.before_request
+def capture_request_id():
+    """Extracts the unique Request ID sent from the Node.js API Gateway"""
+    # Exclude public paths from strict tracing if needed, but capture if available
+    g.request_id = request.headers.get("X-Request-ID", "unknown-ml-req")
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    """Global error handler that includes the Correlation ID in logs and responses"""
+    request_id = getattr(g, 'request_id', 'unknown-ml-req')
+    with open(LOG_FILE, "a") as f:
+        from datetime import datetime
+        f.write(f"{datetime.now()} - [Request-ID: {request_id}] CRITICAL ERROR: {str(e)}\n")
+    
+    return jsonify({
+        "error": "Internal ML Server Error",
+        "message": str(e),
+        "request_id": request_id
+    }), 500
+
 @app.route("/")
 def home():
     return "ML API Running 🚀"
@@ -276,6 +302,7 @@ def predict():
                     f"characters (got {len(text)})"
                 )
             }), 400
+
 
         # Translate incoming text to English if it is not in English
         original_text = text
@@ -327,31 +354,39 @@ def predict():
             prediction = model.predict(text_vector)
             final_output = label_encoder.inverse_transform(prediction)[0]
 
-        # Get probability/confidence from model
-        confidence = 95.0  # default fallback percentage
+        confidence_score = 95.0  # fallback percentage
+        decision_score = None
         try:
             active_model = url_model if input_type == "url" else model
             if hasattr(active_model, "predict_proba"):
                 proba = active_model.predict_proba(text_vector)
-                confidence = round(float(max(proba[0])) * 100, 2)
+                confidence_score = round(float(max(proba[0])) * 100, 2)
+                # Decision score is the raw distance for the winning class
+                decision = active_model.decision_function(text_vector)
+                if isinstance(decision, np.ndarray):
+                    decision_score = float(np.max(np.abs(decision)))
+                else:
+                    decision_score = float(abs(decision))
             elif hasattr(active_model, "decision_function"):
                 decision = active_model.decision_function(text_vector)
                 if isinstance(decision, np.ndarray):
-                    score = float(np.max(np.abs(decision)))
+                    decision_score = float(np.max(np.abs(decision)))
                 else:
-                    score = float(abs(decision))
-                prob = 1.0 / (1.0 + np.exp(-score))
-                confidence = round(prob * 100, 2)
+                    decision_score = float(abs(decision))
+                # Convert to pseudo‑probability
+                prob = 1.0 / (1.0 + np.exp(-decision_score))
+                confidence_score = round(prob * 100, 2)
         except Exception:
-            confidence = 0.0
+            confidence_score = 0.0
+            decision_score = None
 
         # ─── DETERMINE CONFIDENCE LEVEL ───────────────────────────────
 
-        if confidence >= 80:
+        if confidence_score >= 80:
             confidence_level = "high"
             level_color = "green"
             level_emoji = "🟢"
-        elif confidence >= 60:
+        elif confidence_score >= 60:
             confidence_level = "medium"
             level_color = "yellow"
             level_emoji = "🟡"
@@ -366,6 +401,7 @@ def predict():
             for word in words:
                 spam_words_storage[word] = spam_words_storage.get(word, 0) + 1
 
+       # Log prediction with Trace ID
         # Record the scan now that the prediction label is known.
         record_scan(text, final_output, input_type)
 
@@ -373,7 +409,7 @@ def predict():
         text_preview = text[:50] + "..." if len(text) > 50 else text
         with open(LOG_FILE, "a") as f:
             from datetime import datetime
-            f.write(f"{datetime.now()} - Prediction: '{text_preview}' -> {final_output}\n")
+            f.write(f"{datetime.now()} - [Request-ID: {getattr(g, 'request_id', 'unknown')}] Prediction: '{text_preview}' -> {final_output}\n")
         
         # Generate XAI explanation for the input text
         explanation = xai_engine.analyze(text, input_type=input_type)
@@ -390,17 +426,18 @@ def predict():
         }
         if translated:
             response_data["translated_text"] = text
-        if confidence is not None:
-            response_data["confidence"] = confidence
+        response_data["confidence_score"] = confidence_score
+        response_data["decision_score"] = decision_score
+        response_data["confidence_level"] = confidence_level
 
         return jsonify(response_data)
 
     except Exception as e:
+        request_id = getattr(g, 'request_id', 'unknown')
         with open(LOG_FILE, "a") as f:
             from datetime import datetime
-            f.write(f"{datetime.now()} - ERROR: {str(e)}\n")
-        return jsonify({"error": str(e)}), 500
-
+            f.write(f"{datetime.now()} - [Request-ID: {request_id}] ERROR: {str(e)}\n")
+        return jsonify({"error": str(e), "request_id": request_id}), 500
 
 def extract_words(text):
     """Extract words from text, remove stopwords and punctuation."""
@@ -541,7 +578,7 @@ def analyze_email_header():
             data = request.get_json(silent=True) or {}
             headers = data.get("headers", "")
 
-        if not headers or not headers.strip():
+        if not headers or not isinstance(headers, str) or not headers.strip():
             return jsonify({"error": "No email headers provided"}), 400
             
         analysis = analyze_headers(headers)

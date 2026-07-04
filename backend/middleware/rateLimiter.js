@@ -51,10 +51,11 @@ const predictLimiter = rateLimit({
   handler: (req, res, next, options) => {
     const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
     res.status(429).json({
+      success: false,
       error: "Too many predict requests. Please slow down.",
       retryAfter: retryAfterSeconds
     });
   }
 });
 
-module.exports = { loginLimiter, registerLimiter, resetLimiter, apiLimiter, chatLimiter, predictLimiter };
+module.exports = { loginLimiter, registerLimiter, resetLimiter, apiLimiter, chatLimiter, predictLimiter, PREDICT_MAX, PREDICT_WINDOW_MS };

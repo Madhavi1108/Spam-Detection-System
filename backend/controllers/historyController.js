@@ -109,7 +109,10 @@ const searchHistory = async (req, res) => {
     let query = { user: safeUserId };
     
     if (q) {
-      query.query = { $regex: q, $options: 'i' };
+      const escapeRegex = (string) => {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      };
+      query.query = { $regex: escapeRegex(q), $options: 'i' };
     }
     
     if (type && type !== 'all') {

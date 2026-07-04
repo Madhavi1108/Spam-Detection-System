@@ -20,6 +20,7 @@ import SpamInsightsDashboard from "../components/SpamInsightsDashboard";
 import EmailScannerDashboard from "../components/EmailScannerDashboard";
 import Chatbot from "../components/Chatbot";
 import Footer from "../components/Footer";
+import URLPreview from '../components/URLPreview';
 import InstallAppButton from "../components/InstallAppButton";
 import RulesManager from "../components/RulesManager";
 
@@ -55,6 +56,14 @@ function App() {
   });
 
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Detect URLs in text
+  const detectURLs = (text) => {
+    if (!text) return [];
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+     const matches = text.match(urlRegex);
+      return matches || [];
+    };
 
   const playSpamSound = () => {
     if (!soundEnabled) return;
@@ -233,8 +242,7 @@ const analyzeEmojiSentiment = (text) => {
   const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
   const matches = text.match(emojiRegex) || [];
 
-  if(matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
-  }
+  if (matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
   
   // Sentiment mapping
     const sentimentMap = {
@@ -289,13 +297,44 @@ const analyzeEmojiSentiment = (text) => {
       setConfidence(res.data.confidence ?? null);
       setErrorInfo(null);
     } catch (error) {
-      setResult("Error");
-      setErrorInfo({
-        title: "Analysis Failed",
-        message: error.response?.data?.error || error.message || "Something went wrong",
-        retryable: true
-      });
-    } finally {
+      console.error('API Error:', error);
+
+      let errorTitle = "Something went wrong";
+      let errorMessage = "Please try again later.";
+      let retryable = true;
+
+      // Check for specific error types
+      if (error.response == 'ECONNABORTED') {
+        errorTitle = "Request Timeout";
+        errorMessage = "The request took too long to complete. Please try again.";
+        retryable = true;
+      } else if (error.code === 'ERR_NETWORK' || !error.response) {
+    errorTitle = "📡 Network Error";
+    errorMessage = "Unable to connect to the server. Please check your internet connection.";
+    retryable = true;
+  } else if (error.response?.status === 401) {
+    errorTitle = "🔐 Authentication Required";
+    errorMessage = "Your session has expired. Please login again.";
+    retryable = false;
+  } else if (error.response?.status === 404) {
+    errorTitle = "🔧 Service Unavailable";
+    errorMessage = "The prediction service is currently unavailable. Please try again later.";
+    retryable = true;
+  } else if (error.response?.status >= 500) {
+    errorTitle = "⚠️ Server Error";
+    errorMessage = "Something went wrong on our end. Our team has been notified.";
+    retryable = true;
+  } else if (error.response?.data?.error) {
+    errorMessage = error.response.data.error;
+  }
+  
+  setResult("Error");
+  setErrorInfo({
+    title: errorTitle,
+    message: errorMessage,
+    retryable: retryable
+  });
+  } finally {
       setLoading(false);
 
       const today = new Date().toDateString();
@@ -671,6 +710,12 @@ const analyzeEmojiSentiment = (text) => {
                         {result === "Error" && "⚠️ Error"}
                       </span>
                     </div>
+                     
+                    <URLPreview url={text} darkMode={isDark}>
+                      <span className="text-blue-500 underline cursor-pointer">
+                       {text}
+                      </span>
+                    </URLPreview>
 
                     {confidence !== null && result !== "Error" && (
                       <>

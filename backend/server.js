@@ -22,10 +22,10 @@ const { preventCacheStampede } = require('./middleware/cacheMiddleware');
 const SERVER_START_TIME = Date.now();
 const startupLogs = [];
 
-const logStartupTime= (component, startTime) => {
+const logStartupTime = (component, startTime) => {
   const elapsed = Date.now() - startTime;
   startupLogs.push({ component, elapsed });
-    console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
+  console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
 };
 
 // Configure global request interceptor to append the internal secret API key
@@ -56,9 +56,6 @@ const FormData = require("form-data");
 const app = express();
 
 
-// Trust the first proxy so express-rate-limit correctly identifies user IPs
-app.set('trust proxy', 1); 
-
 // Apply standard throttling to the heavy ML prediction route
 const { apiLimiter } = require('./middleware/rateLimiter');
 app.use('/predict', apiLimiter);
@@ -73,58 +70,58 @@ const Sentry = require("@sentry/node");
 let sentryEnabled = false;
 
 if (process.env.SENTRY_DSN && process.env.SENTRY_DSN !== 'https://your-sentry-dsn@o123456.ingest.sentry.io/1234567') {
-    const Sentry = require("@sentry/node");
-    Sentry.init({
-        dsn: process.env.SENTRY_DSN,
-        environment: process.env.NODE_ENV || "development",
-        tracesSampleRate: 1.0,
-    });
-    app.use(Sentry.Handlers.requestHandler());
-    app.use(Sentry.Handlers.tracingHandler());
-    sentryEnabled = true;
-    console.log('✅ Sentry initialized');
-    
-    // Make Sentry available globally
-    global.Sentry = Sentry;
+  const Sentry = require("@sentry/node");
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: 1.0,
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+  sentryEnabled = true;
+  console.log('✅ Sentry initialized');
+
+  // Make Sentry available globally
+  global.Sentry = Sentry;
 } else {
-    console.log('ℹ️ Sentry disabled (no valid DSN provided)');
-    // Mock Sentry to prevent errors
-    global.Sentry = {
-        captureException: () => {},
-        setUser: () => {},
-        setTags: () => {},
-        setExtra: () => {},
-    };
+  console.log('ℹ️ Sentry disabled (no valid DSN provided)');
+  // Mock Sentry to prevent errors
+  global.Sentry = {
+    captureException: () => { },
+    setUser: () => { },
+    setTags: () => { },
+    setExtra: () => { },
+  };
 }
 
 // Connect to MongoDB WITH RETRY
-const connectWithRetry = async (retries=5, delay=5000) => {
+const connectWithRetry = async (retries = 5, delay = 5000) => {
   console.log("Attempting to connect to MongoDB...");
   console.log('Max retries:', retries, 'Delay between retries (ms):', delay);
 
-  for(let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await mongoose.connect(config.mongodbUri);
-            console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
-            monitorConnectionPool();
-            seedAdminUser();
-            return true;
+      console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
+      monitorConnectionPool();
+      seedAdminUser();
+      return true;
     } catch (err) {
       console.error(`❌ MongoDB connection attempt ${attempt} failed:`, err.message);
-      
+
       if (attempt === retries) {
         console.error("Max retries reached. Exiting process.");
         console.error("Please check your MongoDB connection string and ensure the database is accessible.");
         console.error('1.MongoDB is running');
         console.error('2.MongoDB URI is correct in .env file');
         console.error('   3. Network connectivity\n');
-                process.exit(1);
-            }
-            
-            console.log(`⏳ Waiting ${delay/1000}s before retry...\n`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
+        process.exit(1);
+      }
+
+      console.log(`⏳ Waiting ${delay / 1000}s before retry...\n`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
 };
 
 //MONGODB CONNECTION POOL MONITORING
@@ -132,7 +129,7 @@ const monitorConnectionPool = () => {
   const timer = setInterval(() => {
     try {
       const pool = mongoose.connection.client.topology.s.pool;
-      if(pool) {
+      if (pool) {
         const size = pool.size || 0;
         const available = pool.availableConnections || 0;
         const used = pool.usedCount || 0;
@@ -141,7 +138,7 @@ const monitorConnectionPool = () => {
         console.debug(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
 
         //Alert if usage exceeds 80%
-        if(usagePercent > 80){
+        if (usagePercent > 80) {
           console.warn(`[DB Pool] ⚠️ High connection pool usage: ${usagePercent.toFixed(2)}%`);
         }
       }
@@ -155,25 +152,25 @@ const monitorConnectionPool = () => {
 
 
 
-if(process.env.NODE_ENV === 'development'){
+if (process.env.NODE_ENV === 'development') {
   //Log all queries in development mode
-  mongoose.set('debug',true);
+  mongoose.set('debug', true);
 } else {
   // Log only slow queries in production mode
   const originalExec = mongoose.Query.prototype.exec;
-  mongoose.Query.prototype.exec = async function() {
+  mongoose.Query.prototype.exec = async function () {
     const start = Date.now();
     const result = await originalExec.apply(this, arguments);
     const duration = Date.now() - start;
 
-    if(duration > 100){ // Log queries taking longer than 100ms
+    if (duration > 100) { // Log queries taking longer than 100ms
       console.log(`🐢 [${new Date().toISOString()}] Slow Query (${duration}ms):`);
       console.log(`   Collection: ${this._collection.collectionName}`);
       console.log(`   Query:`, JSON.stringify(this._conditions));
     }
 
     return result;
-    };
+  };
 }
 
 // Start connection with retry
@@ -186,17 +183,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(helmet());
 app.use(compression());
-app.use(express.json({limit: '1mb'}));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use('/uploads', express.static('uploads'));
-
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
-        message: 'Server is running',
-        limit: '1MB'
-    });
-});
 
 // ===== REQUEST ID MIDDLEWARE =====
 app.use((req, res, next) => {
@@ -215,11 +204,11 @@ app.use((req, res, next) => {
 
   //Log when response is finished
   res.on('finish', () => {
-        const duration = Date.now() - startTime;
-        console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
-    });
-    
-    next();
+    const duration = Date.now() - startTime;
+    console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
+  });
+
+  next();
 });
 
 // Auth routes , History routes
@@ -250,20 +239,20 @@ const { protect } = require("./middleware/authMiddleware");
 const { predictLimiter } = require("./middleware/rateLimiter");
 
 // ===== PREDICTION COUNT =====
-app.get('/api/history/count',protect,async (req,res) => {
-  try{
-    const count = await History.countDocuments({user:req.user.id});
-    res.json({ success:true, count});
-  }catch(error){
-    console.error('Count error:',error.message);
-    res.status(500).json({success: false, error: error.message});
+app.get('/api/history/count', protect, async (req, res) => {
+  try {
+    const count = await History.countDocuments({ user: req.user.id });
+    res.json({ success: true, count });
+  } catch (error) {
+    console.error('Count error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
-  });
+});
 app.get("/", (req, res) => {
   res.send("Node backend running ");
 });
 
-// Health check endpoint
+// Health check endpoint (Advanced)
 app.get("/health", async (req, res) => {
   try {
     const healthStatus = await getHealthStatus();
@@ -311,12 +300,12 @@ const dispatchWebhook = async (userId, payload) => {
     const user = await User.findById(userId);
     if (user && user.webhookUrl) {
       if (!isSafeWebhookUrl(user.webhookUrl)) {
-         console.warn(`[Webhook Blocked] SSRF protection prevented request to: ${user.webhookUrl}`);
-         return;
+        console.warn(`[Webhook Blocked] SSRF protection prevented request to: ${user.webhookUrl}`);
+        return;
       }
 
       console.log(`[Webhook] Dispatching threat alert to: ${user.webhookUrl}`);
-      
+
       // Fire and forget (Asynchronous execution via Axios) with 10s timeout
       axios.post(user.webhookUrl, {
         event: 'high_risk_threat_detected',
@@ -333,18 +322,7 @@ const dispatchWebhook = async (userId, payload) => {
 };
 
 // Protected: only authenticated users can predict
-app.post(
-  "/predict",
-  predictLimiter,
-  preventCacheStampede,
-  protect,
-  checkCache,
-  async (req, res) => {
-
-app.post('/predict', preventCacheStampede, protect, async (req, res) => {
-// ---> NEW: Added `checkCache` middleware here! <---
-// ---> NEW: Added `checkCache` middleware here! <---
-app.post("/predict", predictLimiter, protect, async (req, res) => {
+app.post("/predict", predictLimiter, preventCacheStampede, protect, checkCache, async (req, res) => {
   try {
     console.log("Reached /predict");
     const { text, type, sender, confidence_threshold } = req.body;
@@ -437,7 +415,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
           level_emoji: isSpam ? "🔴" : "🟢",
           rule_applied: rule.type
         };
-        
+
         return res.json(ruleResult);
       }
     }
@@ -514,7 +492,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
         confidence_threshold: confidence_threshold
       },
       {
-        headers: { 
+        headers: {
           "X-Forwarded-For": req.ip || req.connection.remoteAddress,
           "X-Request-ID": req.requestId // Forwarding the correlation ID
         },
@@ -537,27 +515,27 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
       console.error(`[${req.requestId}] Failed to save history: ${historyError.message}`);
     }
 
-      const finalResponse = response.data;
-      if (typeof finalResponse.confidence === "number") {
-        finalResponse.confidence = Math.round(finalResponse.confidence * 100) / 100;
-      }
+    const finalResponse = response.data;
+    if (typeof finalResponse.confidence === "number") {
+      finalResponse.confidence = Math.round(finalResponse.confidence * 100) / 100;
+    }
 
-      setCache(cacheKey, finalResponse).catch(err => console.error("Cache Save Error:", err));
+    setCache(cacheKey, finalResponse).catch(err => console.error("Cache Save Error:", err));
 
-      // ---> NEW: Trigger Webhook if threat is high risk
-      const predictionLabel = finalResponse.prediction ? finalResponse.prediction.toLowerCase() : '';
-      const confidenceScore = finalResponse.confidence || 0;
-      
-      if (['spam', 'malicious', 'smishing', 'phishing'].includes(predictionLabel) || confidenceScore > 0.90) {
-        dispatchWebhook(req.user.id, {
-          input_text: text,
-          type: type,
-          prediction: predictionLabel,
-          confidence: confidenceScore
-        });
-      }
+    // ---> NEW: Trigger Webhook if threat is high risk
+    const predictionLabel = finalResponse.prediction ? finalResponse.prediction.toLowerCase() : '';
+    const confidenceScore = finalResponse.confidence || 0;
 
-      return res.json(finalResponse);
+    if (['spam', 'malicious', 'smishing', 'phishing'].includes(predictionLabel) || confidenceScore > 0.90) {
+      dispatchWebhook(req.user.id, {
+        input_text: text,
+        type: type,
+        prediction: predictionLabel,
+        confidence: confidenceScore
+      });
+    }
+
+    return res.json(finalResponse);
   } catch (error) {
     Sentry.captureException(error, {
       tags: {
@@ -577,9 +555,6 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
     return res.status(status).json(body);
   }
 });
-
-
-
 
 // Protected: record user feedback on a prediction (forwarded to the ML API)
 const ML_API_BASE = (
@@ -1090,22 +1065,22 @@ async function applyRulesToEmails(userId, emails) {
   if (!emails || !Array.isArray(emails) || emails.length === 0) {
     return { emails: emails || [], spamCount: 0, safeCount: 0 };
   }
-  
+
   const rules = await Rule.find({ user: userId }).limit(1000).lean();
-  
+
   const blacklist = new Set();
   const whitelist = new Set();
-  
+
   rules.forEach(r => {
     if (!r.pattern) return;
     const pattern = r.pattern.toLowerCase().trim();
     if (r.type === 'blacklist') blacklist.add(pattern);
     else if (r.type === 'whitelist') whitelist.add(pattern);
   });
-  
+
   let spamCount = 0;
   let safeCount = 0;
-  
+
   const modifiedEmails = emails.map(email => {
     const sender = (email.sender || "").trim();
     if (!sender) {
@@ -1114,7 +1089,7 @@ async function applyRulesToEmails(userId, emails) {
       else safeCount++;
       return email;
     }
-    
+
     // Parse sender (could be "John Doe <john@doe.com>" or just "john@doe.com")
     let emailAddress = sender;
     const emailMatch = sender.match(/<([^>]+)>/);
@@ -1122,16 +1097,16 @@ async function applyRulesToEmails(userId, emails) {
       emailAddress = emailMatch[1];
     }
     emailAddress = emailAddress.toLowerCase().trim();
-    
+
     const emailParts = emailAddress.split('@');
     const domain = emailParts.length > 1 ? emailParts[1] : '';
-    
+
     const possiblePatterns = [emailAddress];
     if (domain) {
       possiblePatterns.push(`@${domain}`);
       possiblePatterns.push(domain);
     }
-    
+
     let matchedType = null;
     for (const pattern of possiblePatterns) {
       if (blacklist.has(pattern)) {
@@ -1143,24 +1118,24 @@ async function applyRulesToEmails(userId, emails) {
         break;
       }
     }
-    
+
     if (matchedType) {
       const isSpam = matchedType === 'blacklist';
       const updatedPrediction = isSpam ? 'spam' : 'ham';
-      
+
       if (updatedPrediction === 'spam') {
         spamCount++;
       } else {
         safeCount++;
       }
-      
+
       return {
         ...email,
         prediction: updatedPrediction,
         rule_applied: matchingRule.type
       };
     }
-    
+
     // If no rule matches, keep original prediction
     const isSpam = email.prediction && email.prediction.toLowerCase() !== 'ham' && email.prediction.toLowerCase() !== 'safe';
     if (isSpam) {
@@ -1168,10 +1143,10 @@ async function applyRulesToEmails(userId, emails) {
     } else {
       safeCount++;
     }
-    
+
     return email;
   });
-  
+
   return {
     emails: modifiedEmails,
     spamCount,
@@ -1277,45 +1252,47 @@ const server = app.listen(PORT, () => {
 
 // ====== PREDICTION STATISTICS ======
 app.get('/api/stats', protect, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const total = await History.countDocuments({ user: userId });
-        const spam = await History.countDocuments({ user: userId, prediction: 'spam' });
-        const ham = await History.countDocuments({ user: userId, prediction: 'ham' });
-        
-        const daily = await History.aggregate([
-            { $match: { user: userId } },
-            { $group: { 
-                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, 
-                count: { $sum: 1 } 
-            }},
-            { $sort: { _id: -1 } },
-            { $limit: 7 }
-        ]);
-        
-        const feedbackCount = await History.countDocuments({ 
-            user: userId, 
-            feedback: { $exists: true } 
-        });
-        
-        res.json({
-            success: true,
-            data: {
-                total,
-                spam,
-                ham,
-                spamRatio: total > 0 ? (spam / total) * 100 : 0,
-                daily,
-                feedbackCount
-            }
-        });
-    } catch (error) {
-        console.error('Stats error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
+  try {
+    const userId = req.user.id;
+    const total = await History.countDocuments({ user: userId });
+    const spam = await History.countDocuments({ user: userId, prediction: 'spam' });
+    const ham = await History.countDocuments({ user: userId, prediction: 'ham' });
+
+    const daily = await History.aggregate([
+      { $match: { user: userId } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 7 }
+    ]);
+
+    const feedbackCount = await History.countDocuments({
+      user: userId,
+      feedback: { $exists: true }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        total,
+        spam,
+        ham,
+        spamRatio: total > 0 ? (spam / total) * 100 : 0,
+        daily,
+        feedbackCount
+      }
+    });
+  } catch (error) {
+    console.error('Stats error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 
@@ -1334,19 +1311,19 @@ server.on('connection', (connection) => {
 // 2. The Graceful Shutdown Function
 const gracefulShutdown = async (signal) => {
   console.log(`\n🛑 [${signal}] signal received: closing HTTP server...`);
-  
+
   let forceClosed = false;
 
   // 15-Second Fallback Timeout
   const timeoutId = setTimeout(async () => {
     forceClosed = true;
     console.error('⚠️ [Timeout] Could not close connections in time, forcefully shutting down!');
-    
+
     // Destroy all active connections forcefully
     for (const connection of connections) {
       connection.destroy();
     }
-    
+
     if (mongoose.connection.readyState === 1) {
       await mongoose.disconnect();
     }
@@ -1355,11 +1332,11 @@ const gracefulShutdown = async (signal) => {
 
   // Close server to reject NEW requests
   server.close(async () => {
-    if (forceClosed) return; 
-    
+    if (forceClosed) return;
+
     clearTimeout(timeoutId);
     console.log('✅ HTTP server closed. All active requests completed normally.');
-    
+
     try {
       if (mongoose.connection.readyState === 1) {
         await mongoose.disconnect();
@@ -1383,7 +1360,69 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 module.exports = { app, applyRulesToEmails };
 
-process.on('SIGINT', () => process.exit(0));
+// ========================================
+// START SERVER
+// ========================================
+
+// const PORT = config.port;
+// const server = app.listen(PORT, () => {
+//   const totalTime = Date.now() - SERVER_START_TIME;
+//   displayBanner();
+//   console.log(`⏱️ Total startup time: ${totalTime}ms`);
+// });
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+module.exports = { app, applyRulesToEmails };
+
+// ===== SEARCH HISTORY =====
+app.get('/api/history/search', protect, async (req, res) => {
+  try {
+    const { q, type, startDate, endDate } = req.query;
+    const query = { user: req.user.id };
+
+    // Search by message text
+    if (q && q.trim()) {
+      query.query = { $regex: q.trim(), $options: 'i' };
+    }
+
+    // Filter by prediction type
+    if (type && type !== 'all') {
+      query.prediction = type;
+    }
+
+    // Filter by date range
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        query.createdAt.$lte = new Date(endDate);
+      }
+    }
+
+    const results = await History.find(query)
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    const total = await History.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: results,
+      total,
+      count: results.length
+    });
+  } catch (error) {
+    console.error('Search error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 // Protected: get the current IMAP connection status for the logged-in user
 app.get("/imap/status", protect, async (req, res) => {
   try {
@@ -1509,67 +1548,3 @@ app.get("/imap/scan-results", protect, async (req, res) => {
     res.status(500).json({ error: "Something went wrong" });
   }
 });
-
-// ===== SEARCH HISTORY =====
-app.get('/api/history/search',protect, async(req,res) => {
-  try{
-    const{q,type,startDate,endDate} = req.query;
-    const query = { user: req.user.id};
-
-    // Search by message text
-    if(q && q.trim()){
-           query.query = { $regex: q.trim(), $options: 'i' };
-        }
-
-        // Filter by prediction type
-        if (type && type !== 'all') {
-            query.prediction = type;
-        }
-
-        // Filter by date range
-        if (startDate || endDate) {
-            query.createdAt = {};
-            if (startDate) {
-                query.createdAt.$gte = new Date(startDate);
-            }
-            if (endDate) {
-                query.createdAt.$lte = new Date(endDate);
-            }
-        }
-
-        const results = await History.find(query)
-            .sort({ createdAt: -1 })
-            .limit(100);
-
-        const total = await History.countDocuments(query);
-
-        res.json({
-            success: true,
-            data: results,
-            total,
-            count: results.length
-        });
-    } catch (error) {
-        console.error('Search error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-// ========================================
-// START SERVER
-// ========================================
-
-// const PORT = config.port;
-// const server = app.listen(PORT, () => {
-//   const totalTime = Date.now() - SERVER_START_TIME;
-//   displayBanner();
-//   console.log(`⏱️ Total startup time: ${totalTime}ms`);
-// });
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-module.exports = { app, applyRulesToEmails };
- 

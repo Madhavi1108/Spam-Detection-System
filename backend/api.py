@@ -406,6 +406,39 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def make_prediction_response(
+    input_text,
+    result,
+    confidence_score,
+    decision_score,
+    confidence_level,
+    detected_language="en",
+    translated=False,
+    translated_text=None,
+    domain_analysis=None,
+    explanation=None
+):
+    """Enforces a strict standardized response schema for all predictions."""
+    response = {
+        "input": input_text,
+        "result": result,
+        "prediction": result,
+        "confidence": round(float(confidence_score) / 100.0, 4) if confidence_score is not None else 0.0,
+        "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
+        "decision_score": float(decision_score) if decision_score is not None else None,
+        "confidence_level": confidence_level,
+        "detected_language": detected_language,
+        "translated": translated
+    }
+    if translated and translated_text:
+        response["translated_text"] = translated_text
+    if domain_analysis is not None:
+        response["domain_analysis"] = domain_analysis
+    if explanation is not None:
+        response["explanation"] = explanation
+    return response
+
+
 @app.route("/predict", methods=["POST"])
 @limiter.limit(PREDICT_RATE_LIMIT)
 def predict():
@@ -556,21 +589,19 @@ def predict():
         # Generate XAI explanation for the input text
         explanation = xai_engine.analyze(text, input_type=input_type)
 
-        # Return response with domain analysis and explanation
-        response_data = {
-            "input": original_text,
-            "result": final_output,
-            "prediction": final_output,
-            "domain_analysis": domain_analysis,
-            "explanation": explanation,
-            "detected_language": detected_language,
-            "translated": translated,
-        }
-        if translated:
-            response_data["translated_text"] = text
-        response_data["confidence_score"] = confidence_score
-        response_data["decision_score"] = decision_score
-        response_data["confidence_level"] = confidence_level
+        # Return response using helper
+        response_data = make_prediction_response(
+            input_text=original_text,
+            result=final_output,
+            confidence_score=confidence_score,
+            decision_score=decision_score,
+            confidence_level=confidence_level,
+            detected_language=detected_language,
+            translated=translated,
+            translated_text=text if translated else None,
+            domain_analysis=domain_analysis,
+            explanation=explanation
+        )
 
         return jsonify(response_data)
 

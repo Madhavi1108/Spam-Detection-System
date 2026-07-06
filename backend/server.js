@@ -529,7 +529,7 @@ app.post(
 );
 
 // Protected: Bulk prediction
-app.post("/bulk-predict", protect, upload.single("file"), async (req, res) => {
+app.post("/bulk-predict", predictLimiter, protect, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
@@ -582,6 +582,7 @@ app.post("/bulk-predict", protect, upload.single("file"), async (req, res) => {
 // Protected: Export bulk predictions as CSV
 app.post(
   "/bulk-predict/export",
+  predictLimiter,
   protect,
   upload.single("file"),
   async (req, res) => {

@@ -34,7 +34,9 @@ exports.chatHandler = async (req, res) => {
       const recentHistory = history.slice(-10);
       for (const msg of recentHistory) {
         if (msg.role && msg.content) {
-          messages.push({ role: msg.role, content: msg.content });
+          // Prevent prompt injection by strictly allowing only user and assistant roles
+          const safeRole = (msg.role === "assistant") ? "assistant" : "user";
+          messages.push({ role: safeRole, content: msg.content });
         }
       }
     }

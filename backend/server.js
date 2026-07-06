@@ -240,16 +240,6 @@ app.use("/api/reports", reportRoutes);
 const { protect } = require("./middleware/authMiddleware");
 const { predictLimiter } = require("./middleware/rateLimiter");
 
-// ===== PREDICTION COUNT =====
-app.get('/api/history/count', protect, async (req, res) => {
-  try {
-    const count = await History.countDocuments({ user: req.user.id });
-    res.json({ success: true, count });
-  } catch (error) {
-    console.error('Count error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 app.get("/", (req, res) => {
   res.send("Node backend running ");
 });
